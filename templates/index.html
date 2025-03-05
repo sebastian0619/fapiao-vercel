@@ -170,7 +170,7 @@
                             }
                         });
                         this.results = response.data.results;
-                        this.downloadUrl = response.data.download_url;
+                        this.downloadUrl = response.data.download ? '/download/' + response.data.download : null;
                         
                         // 清除选择的文件
                         this.selectedFiles = [];
