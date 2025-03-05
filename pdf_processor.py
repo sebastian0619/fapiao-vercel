@@ -16,7 +16,8 @@ def convert_to_image(file_path, output_dir, pages=None):
         for page_num in pages_to_process:
             logging.debug(f"处理页面: {page_num}")
             page = doc.load_page(page_num)
-            pix = page.get_pixmap(dpi=300)
+            # 降低DPI从300到150，减少内存使用
+            pix = page.get_pixmap(dpi=150)
             output = os.path.join(output_dir, f"{uuid.uuid4()}.png")
             pix.save(output)
             image_paths.append(output)
@@ -45,7 +46,9 @@ def process_special_pdf(file_path):
         logging.debug(f"处理特殊PDF文件: {file_path}")
         text = ""
         with fitz.open(file_path) as doc:
-            for page in doc:
+            # 限制处理的页数，通常第一页就包含了需要的信息
+            for page_idx in range(min(2, len(doc))):
+                page = doc[page_idx]
                 text += page.get_text()
         
         # 提取发票号码

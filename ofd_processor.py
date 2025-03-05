@@ -11,7 +11,8 @@ def process_ofd(file_path, tmp_dir, keep_temp_files=False):
     image_paths = []
     try:
         logging.debug(f"处理OFD文件: {file_path}")
-        image_paths = convert_to_image(file_path, tmp_dir)
+        # 只转换第一页，通常二维码在第一页
+        image_paths = convert_to_image(file_path, tmp_dir, pages=[0])
         if not image_paths:
             logging.error(f"转换OFD为图片失败: {file_path}")
             return None
@@ -72,8 +73,9 @@ def clean_up_images(image_paths):
         except Exception as e:
             logging.error(f"删除临时图片失败 {image_path}: {e}")
 
-def extract_text_from_ofd(file_path):
-    """从OFD文件中提取文本（如果需要）"""
-    # TODO: 实现OFD文本提取功能
-    # 这个功能可能在未来需要，用于处理无法从二维码获取信息的情况
-    pass
+# 删除未使用的功能
+# def extract_text_from_ofd(file_path):
+#     """从OFD文件中提取文本（如果需要）"""
+#     # TODO: 实现OFD文本提取功能
+#     # 这个功能可能在未来需要，用于处理无法从二维码获取信息的情况
+#     pass

@@ -1,24 +1,20 @@
-from fastapi import FastAPI, UploadFile, File, Form, Request, BackgroundTasks, HTTPException, Depends
-from fastapi.responses import JSONResponse, HTMLResponse, FileResponse, RedirectResponse
+from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException, Depends
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import os
 import logging
 from typing import List
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime
 import zipfile
-import asyncio
-from pathlib import Path
+import re
+import hashlib
+import secrets
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from config_manager import config
 from pdf_processor import process_special_pdf
 from ofd_processor import process_ofd
-import re
-import threading
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
-import secrets
-import hashlib
-import json
 import uvicorn
 
 # 配置日志
@@ -65,9 +61,6 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
             headers={"WWW-Authenticate": "Basic"},
         )
     return credentials
-
-# 存储文件上传时间的字典（在Vercel无服务器环境中，这仅在单次请求期间有效）
-file_upload_times = {}
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -217,8 +210,11 @@ async def update_config(
 @app.get("/admin", response_class=HTMLResponse)
 async def admin(request: Request, credentials: HTTPBasicCredentials = Depends(verify_admin)):
     """管理页面（需要密码验证）"""
-    # 在Vercel环境下，优先使用admin_vercel.html模板（如果存在）
-    template_name = "admin_vercel.html" if os.path.exists("templates/admin_vercel.html") else "admin.html"
+    # 在Vercel环境下，使用admin_vercel.html模板
+    template_name = "admin.html"
+    if os.environ.get("VERCEL") == "1":
+        template_name = "admin_vercel.html"
+    
     return templates.TemplateResponse(
         template_name,
         {
@@ -249,41 +245,6 @@ async def update_system_config(
             content={"success": False, "error": str(e)}
         )
 
-@app.post("/admin/user_config")
-async def update_user_config(
-    credentials: HTTPBasicCredentials = Depends(verify_admin),
-    rename_with_amount: bool = Form(...)
-):
-    """更新用户配置"""
-    try:
-        config.set("rename_with_amount", rename_with_amount)
-        return {"success": True}
-    except Exception as e:
-        return JSONResponse(
-            status_code=400,
-            content={"success": False, "error": str(e)}
-        )
-
-@app.post("/user/config")
-async def update_user_config(
-    rename_with_amount: bool = Form(...)
-):
-    """更新Web UI用户配置"""
-    try:
-        # 将Web UI的重命名配置保存为单独的键
-        config.set("webui_rename_with_amount", rename_with_amount)
-        return {"success": True}
-    except Exception as e:
-        return JSONResponse(
-            status_code=400,
-            content={"success": False, "error": str(e)}
-        )
-
-def start_web_server():
-    """启动 Web 服务器"""
-    port = config.get("ui_port", 8080)
-    uvicorn.run(app, host="0.0.0.0", port=port)
-
 if __name__ == "__main__":
-    # 启动Web服务器
-    start_web_server() 
+    port = config.get("ui_port", 8000)
+    uvicorn.run("web_app:app", host="0.0.0.0", port=port, reload=True) 

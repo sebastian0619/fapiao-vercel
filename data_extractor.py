@@ -9,7 +9,12 @@ def scan_qrcode(image_path):
     使用 pyzbar 扫描二维码
     """
     try:
+        # 打开图片并调整大小以减少内存使用
         image = Image.open(image_path)
+        # 如果图片太大，调整大小以降低内存使用
+        if image.width > 1000 or image.height > 1000:
+            image.thumbnail((1000, 1000), Image.LANCZOS)
+        
         decoded_objects = decode(image)
         if decoded_objects:
             qr_data = decoded_objects[0].data.decode('utf-8')
@@ -66,8 +71,9 @@ def extract_information_from_pdf(data_str, file_path):
         text = ""
         try:
             doc = fitz.open(file_path)
-            for page in doc:
-                text += page.get_text()
+            # 只处理第一页，通常发票信息都在第一页
+            if len(doc) > 0:
+                text += doc[0].get_text()
             doc.close()
             
             # 从文本中提取所有金额
