@@ -267,6 +267,21 @@ async def update_system_config(
             content={"success": False, "error": str(e)}
         )
 
+@app.post("/user/config")
+async def update_user_config(
+    rename_with_amount: bool = Form(...)
+):
+    """更新Web UI用户配置"""
+    try:
+        # 将Web UI的重命名配置保存为单独的键
+        config.set("webui_rename_with_amount", rename_with_amount)
+        return {"success": True}
+    except Exception as e:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "error": str(e)}
+        )
+
 if __name__ == "__main__":
     port = config.get("ui_port", 8000)
     uvicorn.run("web_app:app", host="0.0.0.0", port=port, reload=True) 
