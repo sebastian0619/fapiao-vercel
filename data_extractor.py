@@ -4,6 +4,7 @@ import re
 # from pyzbar.pyzbar import decode
 import logging
 import PyPDF2
+import os
 
 def scan_qrcode(image_path):
     """
@@ -63,31 +64,70 @@ def extract_information_from_pdf(file_path):
     简化版本，使用PyPDF2代替PyMuPDF
     """
     try:
+        logging.info(f"从PDF文件提取信息: {file_path}")
         text = ""
         # 使用PyPDF2代替PyMuPDF
         with open(file_path, 'rb') as file:
             reader = PyPDF2.PdfReader(file)
-            # 只处理第一页
-            if len(reader.pages) > 0:
-                page = reader.pages[0]
-                text = page.extract_text()
+            # 处理所有页面以确保不错过发票信息
+            for page in reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text
         
-        # 提取发票号码
+        logging.debug(f"提取的文本长度: {len(text)}")
+        
+        # 提取发票号码 - 使用更灵活的模式匹配
         invoice_number = None
-        invoice_match = re.search(r"\b\d{20}\b|\b\d{8}\b", text)
-        if invoice_match:
-            invoice_number = invoice_match.group(0)
-            logging.debug(f"提取到发票号码: {invoice_number}")
+        # 尝试多种模式，发票号可能是8位、10位或20位
+        invoice_patterns = [
+            r"\b\d{20}\b",   # 20位发票号
+            r"\b\d{10}\b",   # 10位发票号
+            r"\b\d{8}\b"     # 8位发票号
+        ]
+        
+        for pattern in invoice_patterns:
+            invoice_matches = re.findall(pattern, text)
+            if invoice_matches:
+                # 通常第一个匹配的是发票号
+                invoice_number = invoice_matches[0]
+                logging.info(f"提取到发票号码: {invoice_number}")
+                break
+        
+        # 如果没找到，使用文件名作为备用方案
+        if not invoice_number:
+            base_filename = os.path.basename(file_path)
+            invoice_match = re.search(r"\b\d{8,20}\b", base_filename)
+            if invoice_match:
+                invoice_number = invoice_match.group(0)
+                logging.info(f"从文件名提取到发票号码: {invoice_number}")
+            else:
+                # 使用一个通用标识符和时间戳
+                from datetime import datetime
+                invoice_number = f"INV{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                logging.info(f"使用生成的发票号码: {invoice_number}")
         
         # 提取金额
         amount = None
-        amount_match = re.search(r"¥\s*(\d+\.\d+)", text)
-        if amount_match:
-            amount = round(float(amount_match.group(1)), 2)
-            amount = "{:.2f}".format(amount)
-            logging.debug(f"提取到金额: {amount}")
+        amount_patterns = [
+            r"¥\s*(\d+\.\d{2})",
+            r"金额[^\d]*(\d+\.\d{2})",
+            r"价税合计[^\d]*(\d+\.\d{2})",
+            r"小写[^\d]*(\d+\.\d{2})",
+            r"(\d+\.\d{2})元"
+        ]
+        
+        for pattern in amount_patterns:
+            amount_matches = re.findall(pattern, text)
+            if amount_matches:
+                # 如果有多个匹配，尝试找出最大金额
+                amounts = [float(x) for x in amount_matches]
+                max_amount = max(amounts)
+                amount = "{:.2f}".format(max_amount)
+                logging.info(f"提取到金额: {amount}")
+                break
         
         return invoice_number, amount
     except Exception as e:
-        logging.debug(f"从PDF提取信息时出错: {e}")
+        logging.error(f"从PDF提取信息时出错: {e}", exc_info=True)
         return None, None

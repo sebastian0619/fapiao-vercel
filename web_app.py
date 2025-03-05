@@ -102,53 +102,76 @@ async def upload_files(files: List[UploadFile] = File(...)):
     try:
         # 使用Web UI的配置
         config.set("rename_with_amount", config.get("webui_rename_with_amount", False))
+        logging.info(f"接收到{len(files)}个文件上传请求")
         
         for file in files:
             try:
                 # 保存上传的文件
                 file_path = os.path.join(uploads_dir, file.filename)
                 with open(file_path, "wb") as buffer:
-                    shutil.copyfileobj(file.file, buffer)
+                    content = await file.read()
+                    buffer.write(content)
+                
+                logging.info(f"已保存文件: {file_path}")
                 
                 # 处理文件
                 ext = os.path.splitext(file.filename)[1].lower()
                 result = None
                 amount = None
-                if ext == '.pdf':
-                    result = process_special_pdf(file_path)
-                    if result:
-                        try:
-                            amount_match = re.search(r'\[¥(\d+\.\d{2})\]', os.path.basename(result))
-                            if amount_match:
-                                amount = amount_match.group(1)
-                        except Exception as e:
-                            logging.warning(f"提取金额失败: {e}")
-                elif ext == '.ofd':
-                    result = process_ofd(file_path, tmp_dir, False)
-                    if result:
-                        try:
-                            amount_match = re.search(r'\[¥(\d+\.\d{2})\]', os.path.basename(result))
-                            if amount_match:
-                                amount = amount_match.group(1)
-                        except Exception as e:
-                            logging.warning(f"提取金额失败: {e}")
+                
+                try:
+                    if ext == '.pdf':
+                        logging.info(f"开始处理PDF文件: {file_path}")
+                        result = process_special_pdf(file_path)
+                        logging.info(f"PDF处理结果: {result}")
+                        
+                        if result:
+                            try:
+                                amount_match = re.search(r'\[¥(\d+\.\d{2})\]', os.path.basename(result))
+                                if amount_match:
+                                    amount = amount_match.group(1)
+                                    logging.info(f"提取到金额: {amount}")
+                            except Exception as e:
+                                logging.warning(f"提取金额失败: {e}")
+                    elif ext == '.ofd':
+                        logging.info(f"开始处理OFD文件: {file_path}")
+                        result = process_ofd(file_path, tmp_dir, False)
+                        logging.info(f"OFD处理结果: {result}")
+                        
+                        if result:
+                            try:
+                                amount_match = re.search(r'\[¥(\d+\.\d{2})\]', os.path.basename(result))
+                                if amount_match:
+                                    amount = amount_match.group(1)
+                                    logging.info(f"提取到金额: {amount}")
+                            except Exception as e:
+                                logging.warning(f"提取金额失败: {e}")
+                    else:
+                        logging.warning(f"不支持的文件类型: {ext}")
+                except Exception as file_process_error:
+                    logging.error(f"处理文件时出错: {file_process_error}", exc_info=True)
+                    result = None
                 
                 # 准备结果
                 success = result is not None
                 new_name = os.path.basename(result) if success else None
-                results.append({
+                
+                result_item = {
                     "filename": file.filename,
                     "success": success,
                     "amount": amount,
                     "new_name": new_name,
                     "new_path": result if success else None
-                })
+                }
+                
+                logging.info(f"处理结果: {result_item}")
+                results.append(result_item)
                 
                 if success:
                     processed_files.append(result)
                 
             except Exception as e:
-                logging.error(f"处理文件失败: {e}")
+                logging.error(f"处理文件失败: {e}", exc_info=True)
                 results.append({
                     "filename": file.filename,
                     "success": False,
@@ -159,12 +182,13 @@ async def upload_files(files: List[UploadFile] = File(...)):
         # 创建ZIP文件（如果有成功处理的文件）
         if processed_files:
             zip_path, zip_filename = create_zip_file([r for r in results if r["success"]])
+            logging.info(f"创建ZIP文件: {zip_path}")
             return {"success": True, "results": results, "download": zip_filename}
         
         return {"success": True, "results": results}
     
     except Exception as e:
-        logging.error(f"处理上传文件时出错: {e}")
+        logging.error(f"处理上传文件时出错: {e}", exc_info=True)
         return {"success": False, "error": str(e)}
     finally:
         # 恢复原始配置

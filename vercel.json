@@ -32,6 +32,7 @@
         }
     ],
     "env": {
-        "VERCEL": "1"
+        "VERCEL": "1",
+        "PYTHONUNBUFFERED": "1"
     }
 } 
