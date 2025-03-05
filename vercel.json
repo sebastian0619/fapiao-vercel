@@ -6,7 +6,18 @@
             "use": "@vercel/python",
             "config": {
                 "maxLambdaSize": "50mb",
-                "runtime": "python3.9"
+                "runtime": "python3.9",
+                "includeFiles": [
+                    "static/**",
+                    "templates/**",
+                    "*.py",
+                    "config.json"
+                ],
+                "excludeFiles": [
+                    "__pycache__/**",
+                    "*.pyc",
+                    ".*"
+                ]
             }
         }
     ],

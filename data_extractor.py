@@ -1,34 +1,32 @@
 from PIL import Image
 import re
-import fitz  # PyMuPDF, 用于读取PDF文件
-from pyzbar.pyzbar import decode
+# import fitz  # PyMuPDF, 用于读取PDF文件
+# from pyzbar.pyzbar import decode
 import logging
+import PyPDF2
 
 def scan_qrcode(image_path):
     """
-    使用 pyzbar 扫描二维码
+    简化二维码扫描功能，仅返回模拟数据
+    注意：由于移除了pyzbar库，此函数实际上不再扫描二维码
+    在生产环境中需要通过API或其他方式实现此功能
     """
     try:
-        # 打开图片并调整大小以减少内存使用
-        image = Image.open(image_path)
-        # 如果图片太大，调整大小以降低内存使用
-        if image.width > 1000 or image.height > 1000:
-            image.thumbnail((1000, 1000), Image.LANCZOS)
-        
-        decoded_objects = decode(image)
-        if decoded_objects:
-            qr_data = decoded_objects[0].data.decode('utf-8')
-            logging.debug(f"成功识别二维码: {qr_data}")
-            return qr_data
+        logging.debug(f"正在处理图片: {image_path}")
+        # 简化功能，返回None表示未识别到二维码
+        # 在生产环境应使用单独的API服务处理二维码
         return None
     except Exception as e:
-        logging.debug(f"扫描二维码失败: {e}")
+        logging.debug(f"处理图片失败: {e}")
         return None
 
 def extract_information(data_str):
     """
     从二维码数据中提取发票号码和金额
     """
+    if not data_str:
+        return None, None
+        
     invoice_number = None
     amount = None
     
@@ -59,31 +57,37 @@ def extract_information(data_str):
     
     return invoice_number, amount
 
-def extract_information_from_pdf(data_str, file_path):
+def extract_information_from_pdf(file_path):
     """
-    从PDF文件中提取发票信息，包括二维码数据和文本内容
+    直接从PDF文件中提取发票信息
+    简化版本，使用PyPDF2代替PyMuPDF
     """
-    # 首先从二维码数据中提取信息
-    invoice_number, amount = extract_information(data_str)
-
-    # 如果发票号码存在但金额未找到，或发票号码是8位格式，则尝试从PDF文本中提取
-    if invoice_number and (not amount or len(invoice_number) == 8):
+    try:
         text = ""
-        try:
-            doc = fitz.open(file_path)
-            # 只处理第一页，通常发票信息都在第一页
-            if len(doc) > 0:
-                text += doc[0].get_text()
-            doc.close()
-            
-            # 从文本中提取所有金额
-            amount_matches = re.findall(r"¥\s*(\d+\.\d+)", text)
-            if amount_matches:
-                amounts = [float(x) for x in amount_matches]
-                max_amount = max(amounts)  # 使用最大金额
-                amount = "{:.2f}".format(max_amount)
-                logging.debug(f"从PDF提取到最大金额: {amount}")
-        except Exception as e:
-            logging.debug(f"从PDF提取信息时出错: {e}")
-    
-    return invoice_number, amount
+        # 使用PyPDF2代替PyMuPDF
+        with open(file_path, 'rb') as file:
+            reader = PyPDF2.PdfReader(file)
+            # 只处理第一页
+            if len(reader.pages) > 0:
+                page = reader.pages[0]
+                text = page.extract_text()
+        
+        # 提取发票号码
+        invoice_number = None
+        invoice_match = re.search(r"\b\d{20}\b|\b\d{8}\b", text)
+        if invoice_match:
+            invoice_number = invoice_match.group(0)
+            logging.debug(f"提取到发票号码: {invoice_number}")
+        
+        # 提取金额
+        amount = None
+        amount_match = re.search(r"¥\s*(\d+\.\d+)", text)
+        if amount_match:
+            amount = round(float(amount_match.group(1)), 2)
+            amount = "{:.2f}".format(amount)
+            logging.debug(f"提取到金额: {amount}")
+        
+        return invoice_number, amount
+    except Exception as e:
+        logging.debug(f"从PDF提取信息时出错: {e}")
+        return None, None

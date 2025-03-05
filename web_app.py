@@ -210,10 +210,8 @@ async def update_config(
 @app.get("/admin", response_class=HTMLResponse)
 async def admin(request: Request, credentials: HTTPBasicCredentials = Depends(verify_admin)):
     """管理页面（需要密码验证）"""
-    # 在Vercel环境下，使用admin_vercel.html模板
+    # 在Vercel环境下，使用admin.html模板
     template_name = "admin.html"
-    if os.environ.get("VERCEL") == "1":
-        template_name = "admin_vercel.html"
     
     return templates.TemplateResponse(
         template_name,
