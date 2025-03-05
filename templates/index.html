@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>发票处理系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.3.0/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <link href="/static/style.css" rel="stylesheet">
+</head>
+<body>
+    <div id="app" class="container mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1>发票处理系统</h1>
+            <a href="/admin" class="btn btn-outline-secondary">系统管理</a>
+        </div>
+
+        <!-- 用户配置部分 -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">处理选项</h5>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="renameWithAmount" 
+                           v-model="config.rename_with_amount" @change="saveUserConfig">
+                    <label class="form-check-label" for="renameWithAmount">重命名时包含金额</label>
+                </div>
+            </div>
+        </div>
+
+        <!-- 文件上传部分 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">文件处理</h5>
+            </div>
+            <div class="card-body">
+                <form @submit.prevent="uploadFiles">
+                    <div class="mb-3">
+                        <label class="form-label">选择发票文件（支持PDF和OFD格式）</label>
+                        <div class="upload-area" @dragover.prevent @drop.prevent="handleFileDrop">
+                            <input type="file" class="form-control" multiple accept=".pdf,.ofd" @change="handleFileSelect">
+                            <div class="mt-2 text-muted">
+                                或将文件拖放到此处
+                            </div>
+                        </div>
+                    </div>
+                    <div v-if="selectedFiles.length" class="mb-3">
+                        <div class="alert alert-info">
+                            已选择 [[ selectedFiles.length ]] 个文件
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary" :disabled="!selectedFiles.length || processing">
+                        [[ processing ? '处理中...' : '处理文件' ]]
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- 处理结果 -->
+        <div v-if="results.length" class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">处理结果</h5>
+                <button v-if="downloadUrl" 
+                        class="btn btn-success btn-sm"
+                        @click="downloadFiles">
+                    下载处理后的文件
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>原文件名</th>
+                                <th>状态</th>
+                                <th>金额</th>
+                                <th>新文件名</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="result in results" :key="result.filename">
+                                <td>[[ result.filename ]]</td>
+                                <td>
+                                    <span :class="result.success ? 'text-success' : 'text-danger'">
+                                        [[ result.success ? '成功' : '失败' ]]
+                                    </span>
+                                </td>
+                                <td>[[ result.amount ? '¥' + formatAmount(result.amount) : '-' ]]</td>
+                                <td>[[ result.new_name || (result.error || '未重命名') ]]</td>
+                            </tr>
+                        </tbody>
+                        <tfoot v-if="totalAmount > 0">
+                            <tr class="table-info">
+                                <td colspan="2"><strong>总金额</strong></td>
+                                <td colspan="2"><strong>¥[[ formatAmount(totalAmount) ]]</strong></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            delimiters: ['[[', ']]'],
+            data() {
+                return {
+                    config: JSON.parse('{{ config | tojson | safe }}'),
+                    selectedFiles: [],
+                    results: [],
+                    processing: false,
+                    downloadUrl: null
+                };
+            },
+            computed: {
+                totalAmount() {
+                    return this.results
+                        .filter(r => r.success && r.amount)
+                        .reduce((sum, r) => sum + parseFloat(r.amount), 0);
+                }
+            },
+            methods: {
+                formatAmount(amount) {
+                    return parseFloat(amount).toLocaleString('zh-CN', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2
+                    });
+                },
+                async saveUserConfig() {
+                    try {
+                        const formData = new FormData();
+                        formData.append('rename_with_amount', this.config.rename_with_amount);
+
+                        const response = await axios.post('/user/config', formData);
+                        if (!response.data.success) {
+                            throw new Error(response.data.error);
+                        }
+                    } catch (error) {
+                        alert('保存配置失败: ' + error.message);
+                        // 恢复原值
+                        this.config.rename_with_amount = !this.config.rename_with_amount;
+                    }
+                },
+                handleFileSelect(event) {
+                    this.selectedFiles = Array.from(event.target.files);
+                },
+                handleFileDrop(event) {
+                    this.selectedFiles = Array.from(event.dataTransfer.files).filter(
+                        file => file.name.toLowerCase().endsWith('.pdf') || 
+                               file.name.toLowerCase().endsWith('.ofd')
+                    );
+                },
+                async uploadFiles() {
+                    if (!this.selectedFiles.length) return;
+                    this.processing = true;
+                    this.downloadUrl = null;
+
+                    const formData = new FormData();
+                    this.selectedFiles.forEach(file => {
+                        formData.append('files', file);
+                    });
+
+                    try {
+                        const response = await axios.post('/upload', formData, {
+                            headers: {
+                                'Content-Type': 'multipart/form-data'
+                            }
+                        });
+                        this.results = response.data.results;
+                        this.downloadUrl = response.data.download_url;
+                        
+                        // 清除选择的文件
+                        this.selectedFiles = [];
+                        // 重置文件输入框
+                        const fileInput = document.querySelector('input[type="file"]');
+                        if (fileInput) fileInput.value = '';
+                    } catch (error) {
+                        alert('文件处理失败: ' + error.message);
+                    } finally {
+                        this.processing = false;
+                    }
+                },
+                downloadFiles() {
+                    if (this.downloadUrl) {
+                        window.location.href = this.downloadUrl;
+                    }
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html> 
