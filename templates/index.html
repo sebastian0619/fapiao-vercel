@@ -223,9 +223,6 @@
                         this.startLogPolling();
                     }
                 }
-                
-                // 生成一条测试日志
-                this.generateTestLog();
             },
             methods: {
                 formatAmount(amount) {
@@ -310,14 +307,11 @@
                         if (this.logLevel) {
                             params.level = this.logLevel;
                         }
-                        console.log('正在获取日志，参数:', params);
                         const response = await axios.get('/api/logs', { params });
-                        console.log('获取到日志数据:', response.data);
                         
                         if (response.data && Array.isArray(response.data.logs)) {
                             this.logs = response.data.logs;
                         } else {
-                            console.error('日志数据格式不正确:', response.data);
                             this.logs = [];
                         }
                         
@@ -329,9 +323,6 @@
                         });
                     } catch (error) {
                         console.error('获取日志失败:', error);
-                        if (error.response) {
-                            console.error('错误响应:', error.response.data);
-                        }
                     }
                 },
                 startLogPolling() {
@@ -349,15 +340,6 @@
                 },
                 clearLogs() {
                     this.logs = [];
-                },
-                // 生成测试日志
-                async generateTestLog() {
-                    try {
-                        await axios.get('/api/logs?test=true');
-                        console.log('已请求生成测试日志');
-                    } catch (error) {
-                        console.error('生成测试日志失败:', error);
-                    }
                 }
             }
         }).mount('#app');

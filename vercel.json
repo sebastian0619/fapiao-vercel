@@ -12,11 +12,6 @@
                     "templates/**",
                     "*.py",
                     "config.json"
-                ],
-                "excludeFiles": [
-                    "__pycache__/**",
-                    "*.pyc",
-                    ".*"
                 ]
             }
         }
@@ -32,7 +27,6 @@
         }
     ],
     "env": {
-        "VERCEL": "1",
-        "PYTHONUNBUFFERED": "1"
+        "VERCEL": "1"
     }
 } 
