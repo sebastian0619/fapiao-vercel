@@ -180,7 +180,11 @@ def parse_ofd_xml_content(xml_content):
             ".//*[contains(local-name(), 'Invoice')]",
             ".//*[contains(local-name(), 'Number')]",
             ".//*[contains(local-name(), 'Code')]",
-            ".//*[contains(local-name(), 'ID')]"
+            ".//*[contains(local-name(), 'ID')]",
+            ".//*[contains(local-name(), 'DocumentID')]",
+            ".//*[contains(local-name(), 'InvoiceNo')]",
+            ".//*[contains(local-name(), 'fpdm')]",  # 发票代码
+            ".//*[contains(local-name(), 'fphm')]"   # 发票号码
         ]
         
         for pattern in invoice_patterns:
@@ -205,22 +209,81 @@ def parse_ofd_xml_content(xml_content):
             ".//*[contains(lower-case(local-name()), 'amount')]",
             ".//*[contains(lower-case(local-name()), 'price')]",
             ".//*[contains(lower-case(local-name()), 'money')]",
-            ".//*[contains(lower-case(local-name()), 'sum')]"
+            ".//*[contains(lower-case(local-name()), 'sum')]",
+            ".//*[contains(local-name(), 'Tax')]",
+            ".//*[contains(local-name(), 'Total')]",
+            ".//*[contains(local-name(), 'jshj')]",  # 价税合计
+            ".//*[contains(local-name(), 'hjje')]",  # 合计金额
+            ".//*[contains(local-name(), 'jshjxx')]" # 价税合计信息
         ]
+        
+        # 收集所有可能的金额
+        all_amounts = []
         
         for pattern in amount_patterns:
             elements = root.findall(pattern)
             for element in elements:
                 text = element.text if hasattr(element, 'text') else None
                 if text and re.search(r'\d+\.\d{2}', text):
-                    amount = re.search(r'\d+\.\d{2}', text).group(0)
-                    logging.info(f"从XML中提取到金额: {amount}")
-                    result['amount'] = amount
+                    amount_match = re.search(r'\d+\.\d{2}', text)
+                    if amount_match:
+                        try:
+                            amount_value = float(amount_match.group(0))
+                            # 过滤掉极小或极大的值
+                            if 0.01 <= amount_value <= 100000:
+                                all_amounts.append(amount_value)
+                                logging.debug(f"从XML中提取到可能的金额: {amount_value} (使用模式: {pattern})")
+                        except ValueError:
+                            continue
+        
+        # 如果找到金额，使用优化策略选择
+        if all_amounts:
+            # 策略1: 优先选择具有特定属性的节点
+            priority_tags = ["价税合计", "合计金额", "小写", "TotalAmount", "TaxInclusiveAmount"]
+            for tag in priority_tags:
+                for pattern in [f".//*[contains(local-name(), '{tag}')]", f".//*[@*[contains(name(), '{tag}')]]"]:
+                    elements = root.findall(pattern)
+                    for element in elements:
+                        text = element.text if hasattr(element, 'text') else None
+                        if text and re.search(r'\d+\.\d{2}', text):
+                            amount_match = re.search(r'\d+\.\d{2}', text)
+                            if amount_match:
+                                try:
+                                    amount_value = float(amount_match.group(0))
+                                    result['amount'] = "{:.2f}".format(amount_value)
+                                    logging.info(f"基于优先标签'{tag}'从XML提取到金额: {result['amount']}")
+                                    break
+                                except ValueError:
+                                    continue
+                if result['amount']:
                     break
             
-            if result['amount']:
-                break
-                
+            # 策略2: 如果没有找到优先标签，且有明显的最大值
+            if not result['amount'] and len(all_amounts) > 1:
+                sorted_amounts = sorted(all_amounts)
+                if sorted_amounts[-1] > sorted_amounts[-2] * 1.5:
+                    result['amount'] = "{:.2f}".format(sorted_amounts[-1])
+                    logging.info(f"选择最大金额: {result['amount']} (明显大于其他值)")
+            
+            # 策略3: 如果都没有找到，取最大值
+            if not result['amount'] and all_amounts:
+                result['amount'] = "{:.2f}".format(max(all_amounts))
+                logging.info(f"从XML中提取到的最大金额: {result['amount']}")
+        
+        # 扫描所有文本内容以搜索金额
+        if not result['amount']:
+            all_text = ""
+            for elem in root.iter():
+                if elem.text:
+                    all_text += elem.text + " "
+            
+            decimal_matches = re.findall(r'(\d+\.\d{2})', all_text)
+            if decimal_matches:
+                decimal_amounts = [float(m) for m in decimal_matches if 0.01 <= float(m) <= 100000]
+                if decimal_amounts:
+                    result['amount'] = "{:.2f}".format(max(decimal_amounts))
+                    logging.info(f"从所有XML文本中提取到金额: {result['amount']}")
+    
     except Exception as e:
         logging.warning(f"解析XML内容时出错: {e}")
     

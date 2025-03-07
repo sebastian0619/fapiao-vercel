@@ -128,6 +128,7 @@ def extract_information_from_pdf(file_path):
                     text += page_text
         
         logging.debug(f"提取的文本长度: {len(text)}")
+        logging.debug(f"提取的文本(前300字符): {text[:300]}")
         
         # 提取发票号码 - 使用更灵活的模式匹配
         invoice_number = None
@@ -159,25 +160,106 @@ def extract_information_from_pdf(file_path):
                 invoice_number = f"INV{datetime.now().strftime('%Y%m%d%H%M%S')}"
                 logging.info(f"使用生成的发票号码: {invoice_number}")
         
-        # 提取金额
+        # 提取金额 - 优化版本
         amount = None
+        
+        # 更全面的金额匹配模式
         amount_patterns = [
-            r"¥\s*(\d+\.\d{2})",
-            r"金额[^\d]*(\d+\.\d{2})",
-            r"价税合计[^\d]*(\d+\.\d{2})",
-            r"小写[^\d]*(\d+\.\d{2})",
-            r"(\d+\.\d{2})元"
+            # 标准货币格式
+            r"¥\s*(\d+(?:[.,]\d+)?)",  # ¥100.00 或 ¥100,00
+            r"￥\s*(\d+(?:[.,]\d+)?)",  # 全角符号
+            r"RMB\s*(\d+(?:[.,]\d+)?)", # RMB100.00
+            
+            # 发票常见关键词
+            r"(?:金额|价税合计|合计|小写|总计)[^\d\n]{0,20}(?:人民币|￥|¥)?\s*(\d+(?:[.,]\d+)?)",
+            r"(?:金额|价税合计|合计|小写|总计)[^\d\n]{0,20}(\d+(?:[.,]\d+)?)[元¥￥]",
+            
+            # 价税合计
+            r"价[税]?[^\n]{0,10}合[计]?[^\d\n]{0,20}(\d+(?:[.,]\d+)?)",
+            
+            # 数字后跟元
+            r"(\d+(?:[.,]\d+)?)[元圆]",
+            
+            # 大写金额旁边的数字
+            r"(?:人民币大写|大写|大写金额)[^\d\n]{1,50}(?:人民币小写|小写)[^\d\n]{0,10}(\d+(?:[.,]\d+)?)",
+            
+            # 中间有空格的金额
+            r"(?<!\d)(\d{1,3}(?:\s\d{3})+(?:[.,]\d+)?)",
+            
+            # 含有"金额"的行中的数字
+            r".*金额.*?(\d+\.\d{2}).*"
         ]
         
+        # 保存所有匹配到的金额，稍后分析
+        all_amounts = []
+        
+        # 先尝试精确匹配模式
         for pattern in amount_patterns:
             amount_matches = re.findall(pattern, text)
             if amount_matches:
-                # 如果有多个匹配，尝试找出最大金额
-                amounts = [float(x) for x in amount_matches]
-                max_amount = max(amounts)
-                amount = "{:.2f}".format(max_amount)
-                logging.info(f"提取到金额: {amount}")
-                break
+                for match in amount_matches:
+                    # 清理金额字符串
+                    clean_amount = match.replace(",", ".").replace(" ", "")
+                    try:
+                        float_amount = float(clean_amount)
+                        # 过滤可能无意义的极小值和极大值
+                        if 0.01 <= float_amount <= 100000:
+                            all_amounts.append(float_amount)
+                            logging.debug(f"匹配到金额: {float_amount} (使用模式: {pattern})")
+                    except ValueError:
+                        continue
+        
+        # 如果找到多个金额，根据上下文选择最合适的
+        if all_amounts:
+            # 排序所有金额
+            sorted_amounts = sorted(all_amounts)
+            
+            # 策略1: 如果有明显的最大值（超过其他值很多），选择最大值
+            if len(sorted_amounts) > 1 and sorted_amounts[-1] > sorted_amounts[-2] * 1.5:
+                amount = "{:.2f}".format(sorted_amounts[-1])
+                logging.info(f"选择最大金额: {amount} (明显大于其他值)")
+            
+            # 策略2: 如果与"价税合计"等关键词在同一行的金额，优先选择
+            for keyword in ["价税合计", "合计金额", "小写", "总计"]:
+                keyword_pattern = f".*{keyword}.*?(\d+\.\d+).*"
+                amount_matches = re.findall(keyword_pattern, text)
+                if amount_matches:
+                    for match in amount_matches:
+                        try:
+                            float_amount = float(match)
+                            amount = "{:.2f}".format(float_amount)
+                            logging.info(f"基于关键词'{keyword}'提取金额: {amount}")
+                            break
+                        except ValueError:
+                            continue
+                if amount:
+                    break
+            
+            # 策略3: 如果上述都没找到，选择所有值中的最大值
+            if not amount and all_amounts:
+                amount = "{:.2f}".format(max(all_amounts))
+                logging.info(f"选择所有金额中的最大值: {amount}")
+        
+        # 备用策略: 尝试寻找形如数字.数字的模式
+        if not amount:
+            # 使用更宽松的模式
+            decimal_matches = re.findall(r'(\d+\.\d{2})', text)
+            if decimal_matches:
+                decimal_amounts = [float(m) for m in decimal_matches if 0.01 <= float(m) <= 100000]
+                if decimal_amounts:
+                    amount = "{:.2f}".format(max(decimal_amounts))
+                    logging.info(f"使用宽松匹配找到金额: {amount}")
+        
+        # 另一个备用策略: 尝试从文件名提取金额
+        if not amount:
+            base_filename = os.path.basename(file_path)
+            amount_match = re.search(r'(\d+\.\d{2})', base_filename)
+            if amount_match:
+                try:
+                    amount = "{:.2f}".format(float(amount_match.group(1)))
+                    logging.info(f"从文件名提取到金额: {amount}")
+                except ValueError:
+                    pass
         
         return invoice_number, amount
     except Exception as e:
