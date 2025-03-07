@@ -1,7 +1,7 @@
 from PIL import Image
 import re
 # import fitz  # PyMuPDF, 用于读取PDF文件
-# from pyzbar.pyzbar import decode
+from pyzbar.pyzbar import decode
 import logging
 import PyPDF2
 import os
@@ -10,72 +10,55 @@ import io
 
 def scan_qrcode(image_path):
     """
-    尝试提取图像中的文本信息，模拟二维码扫描
-    注意：由于移除了pyzbar库，此函数能力有限
+    使用pyzbar扫描二维码
     """
     try:
-        logging.info(f"正在处理图片: {image_path}")
-        
-        # 打开图片
+        logging.info(f"扫描二维码: {image_path}")
         image = Image.open(image_path)
         
-        # 尝试解析二维码区域 (黑白区域)
-        # 这是一个简化版本，实际上并不会解码二维码，但会尝试检测是否有二维码区域
-        # 如果要完整解码二维码，需要专门的库如pyzbar
+        # 如果图片太大，调整大小以提高处理速度
+        if image.width > 1500 or image.height > 1500:
+            image.thumbnail((1500, 1500), Image.LANCZOS)
         
-        # 尝试检测二维码区域
-        qr_text = detect_text_from_image(image)
-        if qr_text:
-            logging.info(f"从图像中提取到文本信息: {qr_text[:50]}...")
-            return qr_text
+        # 尝试直接读取二维码
+        decoded_objects = decode(image)
+        if decoded_objects:
+            for obj in decoded_objects:
+                try:
+                    qr_data = obj.data.decode('utf-8')
+                    logging.info(f"成功识别二维码: {qr_data[:50]}...")
+                    return qr_data
+                except Exception as e:
+                    logging.warning(f"解码二维码数据失败: {e}")
+                    continue
         
-        # 尝试OCR文本识别（在真实场景中可能需要更专业的OCR库）
-        # 在这里我们只能做简单的模拟
-        
-        # 将图像转为灰度图
-        gray_image = image.convert('L')
-        
-        # 检查图像中是否有发票特征
-        invoice_info = extract_text_from_regions(gray_image)
-        if invoice_info:
-            return invoice_info
-        
-        logging.debug(f"未能从图像中提取有用信息")
+        # 如果直接读取失败，尝试优化图像再次读取
+        # 转为灰度图以提高对比度
+        gray_img = image.convert('L')
+        decoded_objects = decode(gray_img)
+        if decoded_objects:
+            for obj in decoded_objects:
+                try:
+                    qr_data = obj.data.decode('utf-8')
+                    logging.info(f"优化后识别二维码: {qr_data[:50]}...")
+                    return qr_data
+                except Exception as e:
+                    logging.warning(f"解码优化后的二维码数据失败: {e}")
+                    continue
+                    
+        logging.warning(f"未能在图像中识别到二维码: {image_path}")
         return None
     except Exception as e:
-        logging.debug(f"处理图片失败: {e}", exc_info=True)
+        logging.error(f"扫描二维码失败: {e}", exc_info=True)
         return None
-
-def detect_text_from_image(image):
-    """
-    尝试从图像中检测文本信息
-    这是一个简化版本，主要用于检测是否包含发票相关信息
-    """
-    try:
-        # 保存为临时文件
-        temp_buffer = io.BytesIO()
-        image.save(temp_buffer, format="PNG")
-        temp_buffer.seek(0)
-        
-        # 在真实应用中，可以集成OCR服务
-        # 这里我们返回None表示没有检测到
-        return None
-    except Exception as e:
-        logging.warning(f"检测图像文本时出错: {e}")
-        return None
-
-def extract_text_from_regions(image):
-    """
-    从图像的特定区域提取文本
-    这是一个简化版本，实际应用中可能需要专业OCR库
-    """
-    # 在真实应用中，这里会有区域识别和OCR逻辑
-    # 目前返回None
-    return None
 
 def extract_information(data_str):
     """
     从二维码数据中提取发票号码和金额
+    
+    常见二维码格式:
+    1. "发票代码:xxxxxxxx,发票号码:xxxxxxxx,日期:xxxx年xx月xx日,校验码:xxxxx,金额:xxxx.xx"
+    2. "01,10,xxxxxxxx,xxxxxxxx,xxxx.xx,xxxx.xx,xxxxxx"
     """
     if not data_str:
         return None, None
@@ -84,41 +67,114 @@ def extract_information(data_str):
     amount = None
     
     try:
-        # 提取发票号码（支持20位和8位格式）
-        invoice_match = re.search(r"\b\d{20}\b|\b\d{8}\b", data_str)
-        if invoice_match:
-            invoice_number = invoice_match.group(0)
-            logging.debug(f"提取到发票号码: {invoice_number}")
+        logging.info(f"从二维码提取信息: {data_str[:100]}...")
         
-        # 提取金额（支持多种格式）
-        amount_patterns = [
-            r"(\d+\.\d+)(?=,)",  # 标准格式：数字.数字,
-            r"金额[:：]\s*(\d+\.\d+)",  # 带"金额"标识
-            r"¥\s*(\d+\.\d+)",  # 带货币符号
-            r"[^\d](\d+\.\d+)[^\d]"  # 通用数字格式
-        ]
+        # 尝试多种模式解析二维码内容
         
-        for pattern in amount_patterns:
-            amount_match = re.search(pattern, data_str)
+        # 模式1: 键值对格式
+        if "发票号码" in data_str or "发票代码" in data_str:
+            # 提取发票号码
+            invoice_match = re.search(r"发票号码[：:]\s*(\d{8,20})", data_str)
+            if invoice_match:
+                invoice_number = invoice_match.group(1)
+                logging.info(f"从键值对二维码提取到发票号码: {invoice_number}")
+            else:
+                # 尝试提取发票代码+发票号码
+                code_match = re.search(r"发票代码[：:]\s*(\d{10,12})", data_str)
+                number_match = re.search(r"发票号码[：:]\s*(\d{8})", data_str)
+                if code_match and number_match:
+                    invoice_number = code_match.group(1) + number_match.group(1)
+                    logging.info(f"从键值对二维码提取到发票代码+号码: {invoice_number}")
+                    
+            # 提取金额
+            amount_match = re.search(r"金额[：:]\s*(\d+\.\d{2})", data_str)
             if amount_match:
-                amount = round(float(amount_match.group(1)), 2)
-                amount = "{:.2f}".format(amount)
-                logging.debug(f"提取到金额: {amount}")
-                break
+                amount = amount_match.group(1)
+                logging.info(f"从键值对二维码提取到金额: {amount}")
+            else:
+                # 尝试其他金额格式
+                amount_match = re.search(r"(?:金额|价税合计)[^\d]*(\d+\.\d{2})", data_str)
+                if amount_match:
+                    amount = amount_match.group(1)
+                    logging.info(f"从键值对二维码提取到金额(备选格式): {amount}")
+                
+        # 模式2: 逗号分隔的数值格式
+        elif "," in data_str and len(data_str.split(",")) >= 5:
+            parts = data_str.split(",")
+            # 通常第3、4个部分是发票代码和发票号码
+            if len(parts) >= 4 and re.match(r"\d{8,12}", parts[2]) and re.match(r"\d{8}", parts[3]):
+                invoice_number = parts[2] + parts[3]
+                logging.info(f"从CSV格式二维码提取到发票代码+号码: {invoice_number}")
+                
+                # 通常第5个部分是金额
+                if len(parts) >= 5 and re.match(r"\d+\.\d{2}", parts[4]):
+                    amount = parts[4]
+                    logging.info(f"从CSV格式二维码提取到金额: {amount}")
+        
+        # 如果上述解析失败，尝试通用的数据格式
+        if not invoice_number:
+            # 寻找所有可能的发票号码格式
+            number_matches = re.findall(r"\b\d{8,20}\b", data_str)
+            if number_matches:
+                invoice_number = number_matches[0]  # 使用第一个匹配
+                logging.info(f"通用模式提取到发票号码: {invoice_number}")
+        
+        if not amount:
+            # 寻找所有可能的金额格式
+            amount_matches = re.findall(r"\b\d+\.\d{2}\b", data_str)
+            if amount_matches:
+                # 过滤掉不合理的金额
+                valid_amounts = [float(a) for a in amount_matches if 0.01 <= float(a) <= 100000]
+                if valid_amounts:
+                    amount = "{:.2f}".format(max(valid_amounts))
+                    logging.info(f"通用模式提取到金额: {amount}")
     except Exception as e:
-        logging.debug(f"提取信息时出错: {e}")
+        logging.error(f"从二维码数据提取信息时出错: {e}", exc_info=True)
     
     return invoice_number, amount
 
 def extract_information_from_pdf(file_path):
     """
-    直接从PDF文件中提取发票信息
-    简化版本，使用PyPDF2代替PyMuPDF
+    从PDF文件中提取发票信息
+    优先使用二维码方式，如果失败再尝试文本提取
     """
     try:
         logging.info(f"从PDF文件提取信息: {file_path}")
+        
+        # 步骤1: 尝试从PDF提取图像并识别二维码
+        try:
+            from pdf_processor import convert_to_image_memory
+            images = convert_to_image_memory(file_path)
+            
+            # 从图像中提取二维码信息
+            for idx, img_data in enumerate(images):
+                img = Image.open(io.BytesIO(img_data))
+                # 保存临时图像文件用于二维码扫描
+                temp_img_path = f"/tmp/temp_qr_img_{idx}.png"
+                img.save(temp_img_path)
+                
+                # 扫描二维码
+                qr_data = scan_qrcode(temp_img_path)
+                
+                # 清理临时文件
+                try:
+                    os.remove(temp_img_path)
+                except:
+                    pass
+                    
+                # 如果找到二维码信息，从中提取发票信息
+                if qr_data:
+                    invoice_number, amount = extract_information(qr_data)
+                    if invoice_number:
+                        logging.info(f"成功从二维码提取到信息 - 发票号: {invoice_number}, 金额: {amount}")
+                        return invoice_number, amount
+        except Exception as e:
+            logging.warning(f"从PDF提取图像并识别二维码失败: {e}")
+            
+        # 步骤2: 如果二维码提取失败，回退到文本提取方法
+        logging.info("二维码提取失败，尝试从文本提取信息")
         text = ""
-        # 使用PyPDF2代替PyMuPDF
+        # 使用PyPDF2提取文本
         with open(file_path, 'rb') as file:
             reader = PyPDF2.PdfReader(file)
             # 处理所有页面以确保不错过发票信息
@@ -144,7 +200,7 @@ def extract_information_from_pdf(file_path):
             if invoice_matches:
                 # 通常第一个匹配的是发票号
                 invoice_number = invoice_matches[0]
-                logging.info(f"提取到发票号码: {invoice_number}")
+                logging.info(f"从文本提取到发票号码: {invoice_number}")
                 break
         
         # 如果没找到，使用文件名作为备用方案
@@ -165,103 +221,140 @@ def extract_information_from_pdf(file_path):
         
         # 更全面的金额匹配模式
         amount_patterns = [
-            # 标准货币格式
-            r"¥\s*(\d+(?:[.,]\d+)?)",  # ¥100.00 或 ¥100,00
-            r"￥\s*(\d+(?:[.,]\d+)?)",  # 全角符号
-            r"RMB\s*(\d+(?:[.,]\d+)?)", # RMB100.00
+            # 小写合计行的格式模式  
+            r"小写[金额]?[^\d\n]{0,20}(?:¥|￥|RMB|人民币)?(\d+\.\d{2})",
+            r"(?:小写|小写金额|小写总计)[：:]((?:¥|￥)?[0-9,]+\.[0-9]{2})",
             
-            # 发票常见关键词
-            r"(?:金额|价税合计|合计|小写|总计)[^\d\n]{0,20}(?:人民币|￥|¥)?\s*(\d+(?:[.,]\d+)?)",
-            r"(?:金额|价税合计|合计|小写|总计)[^\d\n]{0,20}(\d+(?:[.,]\d+)?)[元¥￥]",
+            # 价税合计相关格式
+            r"[价税]+[合计]+[：:]?(?:¥|￥|RMB|人民币)?\s*([0-9,]+\.[0-9]{2})",
+            r"(?:[（(]?小写[）)]?|价税合计)[^\d\n]{0,20}(?:¥|￥|RMB)?\s*([0-9,]+\.[0-9]{2})",
             
-            # 价税合计
-            r"价[税]?[^\n]{0,10}合[计]?[^\d\n]{0,20}(\d+(?:[.,]\d+)?)",
+            # 标准货币格式  
+            r"(?:¥|￥)\s*([0-9,]+\.[0-9]{2})",
+            r"RMB\s*([0-9,]+\.[0-9]{2})",
             
-            # 数字后跟元
-            r"(\d+(?:[.,]\d+)?)[元圆]",
+            # 发票专用格式
+            r"金额[：:]\s*([0-9,]+\.[0-9]{2})",
+            r"(?:金额|合[计]?)[^\d\n]{0,20}(?:¥|￥)?\s*([0-9,]+\.[0-9]{2})",
             
-            # 大写金额旁边的数字
-            r"(?:人民币大写|大写|大写金额)[^\d\n]{1,50}(?:人民币小写|小写)[^\d\n]{0,10}(\d+(?:[.,]\d+)?)",
-            
-            # 中间有空格的金额
-            r"(?<!\d)(\d{1,3}(?:\s\d{3})+(?:[.,]\d+)?)",
-            
-            # 含有"金额"的行中的数字
-            r".*金额.*?(\d+\.\d{2}).*"
+            # 更通用的模式，一般用作备选
+            r"(\d+\.\d{2})元",
+            r"\b(\d+\.\d{2})\b"
         ]
         
         # 保存所有匹配到的金额，稍后分析
         all_amounts = []
+        all_amount_contexts = {}  # 存储金额及其上下文
         
-        # 先尝试精确匹配模式
-        for pattern in amount_patterns:
-            amount_matches = re.findall(pattern, text)
-            if amount_matches:
+        # 先尝试从文件名中提取金额，这通常是最准确的来源
+        base_filename = os.path.basename(file_path)
+        file_amount_match = re.search(r"\[¥?(\d+\.\d{2})\]", base_filename)
+        if file_amount_match:
+            try:
+                file_amount = float(file_amount_match.group(1))
+                all_amounts.append(file_amount)
+                all_amount_contexts[file_amount] = f"文件名: {base_filename}"
+                logging.info(f"从文件名提取到金额: {file_amount}")
+            except:
+                pass
+        
+        # 然后尝试高优先级的金额匹配模式
+        # 小写合计和价税合计是发票上最准确的金额来源
+        high_priority_patterns = [
+            (r"小写[金额]?[^\d\n]{0,20}(?:¥|￥|RMB|人民币)?(\d+\.\d{2})", "小写金额"),
+            (r"(?:小写|小写金额|小写总计)[：:]((?:¥|￥)?[0-9,]+\.[0-9]{2})", "小写金额冒号格式"),
+            (r"[价税]+[合计]+[：:]?(?:¥|￥|RMB|人民币)?\s*([0-9,]+\.[0-9]{2})", "价税合计"),
+            (r"(?:合[计]?金额|价税合计)[^\d\n]{0,20}(?:¥|￥)?\s*([0-9,]+\.[0-9]{2})", "合计金额") 
+        ]
+        
+        for pattern, desc in high_priority_patterns:
+            matches = re.findall(pattern, text)
+            for match in matches:
+                if isinstance(match, tuple):  # 处理多组捕获
+                    match = match[0]
+                # 清理金额字符串
+                clean_amount = match.replace(",", "").replace("¥", "").replace("￥", "")
+                try:
+                    float_amount = float(clean_amount)
+                    if 0.01 <= float_amount <= 100000:
+                        all_amounts.append(float_amount)
+                        # 找出匹配上下文（前后20个字符)
+                        match_context = find_context(text, match)
+                        all_amount_contexts[float_amount] = f"{desc}: {match_context}"
+                        logging.info(f"找到高优先级金额: {float_amount} ({desc})")
+                except ValueError:
+                    continue
+        
+        # 如果高优先级匹配没有结果，则尝试其他模式
+        if not all_amounts:
+            for pattern in amount_patterns:
+                amount_matches = re.findall(pattern, text)
                 for match in amount_matches:
+                    if isinstance(match, tuple):  # 处理多组捕获
+                        match = match[0]
                     # 清理金额字符串
-                    clean_amount = match.replace(",", ".").replace(" ", "")
+                    clean_amount = match.replace(",", "").replace("¥", "").replace("￥", "")
                     try:
                         float_amount = float(clean_amount)
-                        # 过滤可能无意义的极小值和极大值
                         if 0.01 <= float_amount <= 100000:
                             all_amounts.append(float_amount)
-                            logging.debug(f"匹配到金额: {float_amount} (使用模式: {pattern})")
+                            # 找出匹配上下文（前后20个字符)
+                            match_context = find_context(text, match)
+                            all_amount_contexts[float_amount] = f"普通匹配: {match_context}"
+                            logging.info(f"找到普通金额: {float_amount}")
                     except ValueError:
                         continue
         
         # 如果找到多个金额，根据上下文选择最合适的
         if all_amounts:
-            # 排序所有金额
-            sorted_amounts = sorted(all_amounts)
+            logging.info(f"找到的所有可能金额: {all_amounts}")
+            for amt, context in all_amount_contexts.items():
+                logging.info(f"金额 {amt} 上下文: {context}")
+                
+            # 优先考虑通过文件名得到的金额
+            file_amount = None
+            file_amount_match = re.search(r"\[¥?(\d+\.\d{2})\]", base_filename)
+            if file_amount_match:
+                try:
+                    file_amount = float(file_amount_match.group(1)) 
+                    # 判断文件名金额是否在提取的金额中（允许0.01的误差）
+                    for amt in all_amounts:
+                        if abs(amt - file_amount) < 0.01:
+                            amount = "{:.2f}".format(amt)
+                            logging.info(f"选择与文件名匹配的金额: {amount}")
+                            return invoice_number, amount
+                except:
+                    pass
+                    
+            # 优先选择含有"小写"或"价税合计"关键词上下文的金额
+            for amt, context in all_amount_contexts.items():
+                lower_context = context.lower()
+                if any(key in lower_context for key in ["小写金额", "小写", "价税合计", "合计金额"]):
+                    amount = "{:.2f}".format(amt)
+                    logging.info(f"基于关键词上下文选择金额: {amount} (上下文: {context})")
+                    return invoice_number, amount
             
-            # 策略1: 如果有明显的最大值（超过其他值很多），选择最大值
-            if len(sorted_amounts) > 1 and sorted_amounts[-1] > sorted_amounts[-2] * 1.5:
-                amount = "{:.2f}".format(sorted_amounts[-1])
-                logging.info(f"选择最大金额: {amount} (明显大于其他值)")
-            
-            # 策略2: 如果与"价税合计"等关键词在同一行的金额，优先选择
-            for keyword in ["价税合计", "合计金额", "小写", "总计"]:
-                keyword_pattern = f".*{keyword}.*?(\d+\.\d+).*"
-                amount_matches = re.findall(keyword_pattern, text)
-                if amount_matches:
-                    for match in amount_matches:
-                        try:
-                            float_amount = float(match)
-                            amount = "{:.2f}".format(float_amount)
-                            logging.info(f"基于关键词'{keyword}'提取金额: {amount}")
-                            break
-                        except ValueError:
-                            continue
-                if amount:
-                    break
-            
-            # 策略3: 如果上述都没找到，选择所有值中的最大值
-            if not amount and all_amounts:
+            # 如果找不到明确的上下文，则查找最大的那个值
+            if all_amounts:
                 amount = "{:.2f}".format(max(all_amounts))
                 logging.info(f"选择所有金额中的最大值: {amount}")
-        
-        # 备用策略: 尝试寻找形如数字.数字的模式
-        if not amount:
-            # 使用更宽松的模式
-            decimal_matches = re.findall(r'(\d+\.\d{2})', text)
-            if decimal_matches:
-                decimal_amounts = [float(m) for m in decimal_matches if 0.01 <= float(m) <= 100000]
-                if decimal_amounts:
-                    amount = "{:.2f}".format(max(decimal_amounts))
-                    logging.info(f"使用宽松匹配找到金额: {amount}")
-        
-        # 另一个备用策略: 尝试从文件名提取金额
-        if not amount:
-            base_filename = os.path.basename(file_path)
-            amount_match = re.search(r'(\d+\.\d{2})', base_filename)
-            if amount_match:
-                try:
-                    amount = "{:.2f}".format(float(amount_match.group(1)))
-                    logging.info(f"从文件名提取到金额: {amount}")
-                except ValueError:
-                    pass
         
         return invoice_number, amount
     except Exception as e:
         logging.error(f"从PDF提取信息时出错: {e}", exc_info=True)
         return None, None
+        
+def find_context(text, match_text, context_chars=20):
+    """
+    查找匹配文本在原文中的上下文
+    """
+    try:
+        index = text.find(match_text)
+        if index >= 0:
+            start = max(0, index - context_chars)
+            end = min(len(text), index + len(match_text) + context_chars)
+            context = text[start:end]
+            return f"...{context}..."
+        return "上下文未找到"
+    except:
+        return "上下文提取错误"

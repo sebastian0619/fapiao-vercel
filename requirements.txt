@@ -2,12 +2,15 @@
 # opencv-python-headless==4.8.1.78
 pillow==10.2.0
 # 使用轻量级的PDF库替代PyMuPDF
-pypdf2==3.0.1
-# PyMuPDF==1.23.8
+PyPDF2==3.0.1
+PyMuPDF==1.23.8
 requests==2.31.0
 fastapi==0.109.0
 uvicorn==0.27.0
 python-multipart==0.0.6
 jinja2==3.1.3
-# 直接使用Pillow和zbar-py代替pyzbar
-# pyzbar==0.1.9
+# 二维码读取库
+pyzbar==0.1.9
+numpy==1.26.1
+defusedxml==0.7.1
+lxml==4.9.3

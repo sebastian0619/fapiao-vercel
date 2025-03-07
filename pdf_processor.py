@@ -2,6 +2,9 @@ import os
 import logging
 import re
 import PyPDF2
+import io
+import fitz  # PyMuPDF
+from PIL import Image
 from config_manager import config
 from data_extractor import extract_information_from_pdf
 from datetime import datetime
@@ -70,3 +73,105 @@ def process_special_pdf(file_path):
     except Exception as e:
         logging.error(f"处理PDF文件时出错: {e}", exc_info=True)
         return None
+
+def convert_to_image_memory(pdf_path, zoom_x=2.0, zoom_y=2.0):
+    """
+    将PDF转换为内存中的图像列表
+    
+    Args:
+        pdf_path: PDF文件路径
+        zoom_x: 水平缩放比例
+        zoom_y: 垂直缩放比例
+        
+    Returns:
+        图像二进制数据列表
+    """
+    try:
+        logging.info(f"从PDF提取图像: {pdf_path}")
+        
+        # 打开PDF文件
+        pdf_document = fitz.open(pdf_path)
+        images = []
+        
+        # 处理每一页
+        for page_num in range(len(pdf_document)):
+            page = pdf_document.load_page(page_num)
+            
+            # 设置矩阵用于缩放
+            mat = fitz.Matrix(zoom_x, zoom_y)
+            
+            # 获取页面图像
+            pix = page.get_pixmap(matrix=mat)
+            
+            # 转换为PIL图像
+            img_data = io.BytesIO(pix.tobytes())
+            images.append(img_data.getvalue())
+            
+            logging.info(f"提取了页面 {page_num+1}/{len(pdf_document)} 的图像")
+            
+            # 仅处理前5页以提高性能
+            if page_num >= 4:
+                logging.info(f"仅处理前5页图像，跳过剩余页面")
+                break
+                
+        if not images:
+            logging.warning(f"未能从PDF中提取图像: {pdf_path}")
+            
+        logging.info(f"成功从PDF提取了 {len(images)} 张图像")
+        return images
+    except Exception as e:
+        logging.error(f"提取PDF图像时出错: {e}", exc_info=True)
+        return []
+        
+def extract_pages_as_images(pdf_path, output_dir=None, prefix="page", format="png"):
+    """
+    从PDF中提取页面并保存为图像文件
+    
+    Args:
+        pdf_path: PDF文件路径
+        output_dir: 输出目录，默认为PDF所在目录
+        prefix: 图像文件名前缀
+        format: 图像格式 (png, jpg等)
+        
+    Returns:
+        保存的图像文件路径列表
+    """
+    try:
+        # 如果未指定输出目录，使用PDF所在目录
+        if not output_dir:
+            output_dir = os.path.dirname(pdf_path)
+            
+        # 确保输出目录存在
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 获取PDF文件名（不含扩展名）
+        base_name = os.path.splitext(os.path.basename(pdf_path))[0]
+        
+        # 打开PDF文件
+        pdf_document = fitz.open(pdf_path)
+        saved_images = []
+        
+        # 处理每一页
+        for page_num in range(len(pdf_document)):
+            page = pdf_document.load_page(page_num)
+            
+            # 设置矩阵用于高质量渲染 (300 DPI)
+            mat = fitz.Matrix(2.0, 2.0)
+            
+            # 获取页面图像
+            pix = page.get_pixmap(matrix=mat)
+            
+            # 构建输出文件路径
+            output_filename = f"{prefix}_{base_name}_{page_num+1}.{format}"
+            output_path = os.path.join(output_dir, output_filename)
+            
+            # 保存图像
+            pix.save(output_path)
+            saved_images.append(output_path)
+            
+            logging.info(f"保存页面 {page_num+1}/{len(pdf_document)} 为图像: {output_path}")
+            
+        return saved_images
+    except Exception as e:
+        logging.error(f"提取PDF页面为图像时出错: {e}", exc_info=True)
+        return []
