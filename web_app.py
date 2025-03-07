@@ -29,31 +29,48 @@ class MemoryLogHandler(logging.Handler):
         self.capacity = capacity
         self.log_records = []
         self.lock = threading.Lock()
+        # 添加一个初始日志记录
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        self.log_records.append({
+            'timestamp': timestamp,
+            'level': 'INFO',
+            'message': '日志系统已初始化',
+            'logger': 'system'
+        })
         
     def emit(self, record):
-        with self.lock:
-            # 格式化日志记录
-            message = self.format(record)
-            timestamp = datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-            log_entry = {
-                'timestamp': timestamp,
-                'level': record.levelname,
-                'message': message,
-                'logger': record.name
-            }
-            
-            # 添加日志记录，保持日志数量在容量范围内
-            self.log_records.append(log_entry)
-            if len(self.log_records) > self.capacity:
-                self.log_records = self.log_records[-self.capacity:]
+        try:
+            with self.lock:
+                # 格式化日志记录
+                message = self.format(record)
+                timestamp = datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                log_entry = {
+                    'timestamp': timestamp,
+                    'level': record.levelname,
+                    'message': message,
+                    'logger': record.name
+                }
+                
+                # 添加日志记录，保持日志数量在容量范围内
+                self.log_records.append(log_entry)
+                if len(self.log_records) > self.capacity:
+                    self.log_records = self.log_records[-self.capacity:]
+        except Exception as e:
+            print(f"日志记录错误: {str(e)}")
                 
     def get_logs(self, limit=100, level=None):
         """获取最近的日志记录"""
-        with self.lock:
-            if level:
-                filtered_logs = [log for log in self.log_records if log['level'] == level.upper()]
-                return filtered_logs[-limit:]
-            return self.log_records[-limit:]
+        try:
+            with self.lock:
+                if level:
+                    # 转为大写再进行比较
+                    level_upper = level.upper()
+                    filtered_logs = [log for log in self.log_records if log['level'] == level_upper]
+                    return filtered_logs[-limit:] if filtered_logs else []
+                return self.log_records[-limit:] if self.log_records else []
+        except Exception as e:
+            print(f"获取日志错误: {str(e)}")
+            return []
 
 # 创建内存日志处理器
 memory_handler = MemoryLogHandler(capacity=1000)
@@ -69,6 +86,14 @@ logging.basicConfig(
 # 将内存处理器添加到根日志记录器
 root_logger = logging.getLogger()
 root_logger.addHandler(memory_handler)
+
+# 添加一些系统启动日志
+logging.info("发票处理系统启动")
+logging.info(f"运行环境: {'Vercel' if os.environ.get('VERCEL') == '1' else '本地'}")
+logging.info(f"工作目录: {os.getcwd()}")
+logging.info(f"临时目录: {tmp_dir}")
+logging.info(f"上传目录: {uploads_dir}")
+logging.info(f"下载目录: {downloads_dir}")
 
 app = FastAPI(title="发票处理系统")
 
@@ -356,14 +381,49 @@ async def update_user_config(
         )
 
 @app.get("/api/logs", response_class=JSONResponse)
-async def get_logs(limit: int = 100, level: str = None):
+async def get_logs(limit: int = 100, level: str = None, test: bool = False):
     """获取最近的日志记录"""
-    if level and level.upper() not in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']:
-        level = None
-    
-    logs = memory_handler.get_logs(limit=limit, level=level)
-    logging.info(f"获取日志记录: {len(logs)} 条, 级别: {level or '所有'}")
-    return {"logs": logs}
+    try:
+        # 如果是测试请求，生成几条不同级别的测试日志
+        if test:
+            logging.debug("这是一条测试DEBUG日志")
+            logging.info("这是一条测试INFO日志")
+            logging.warning("这是一条测试WARNING日志")
+            logging.error("这是一条测试ERROR日志")
+            
+        if level and level.upper() not in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']:
+            level = None
+        
+        # 生成一条测试日志，确保有日志可以显示
+        logging.info(f"日志API被调用: limit={limit}, level={level}")
+        
+        logs = memory_handler.get_logs(limit=limit, level=level)
+        logging.debug(f"返回日志记录: {len(logs)} 条")
+        
+        # 确保日志不为空，至少添加一条测试日志
+        if not logs:
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+            logs = [{
+                'timestamp': current_time,
+                'level': 'INFO',
+                'message': '系统正在运行中，暂无其他日志记录',
+                'logger': 'system'
+            }]
+        
+        return {"logs": logs, "count": len(logs), "status": "success"}
+    except Exception as e:
+        logging.error(f"获取日志时出错: {str(e)}", exc_info=True)
+        return {"logs": [], "error": str(e), "status": "error"}
+
+# 应用启动事件
+@app.on_event("startup")
+async def startup_event():
+    """应用启动时执行"""
+    logging.info("FastAPI应用已启动")
+    # 确保目录存在
+    for directory in [uploads_dir, downloads_dir]:
+        os.makedirs(directory, exist_ok=True)
+        logging.info(f"确保目录存在: {directory}")
 
 if __name__ == "__main__":
     port = config.get("ui_port", 8000)
