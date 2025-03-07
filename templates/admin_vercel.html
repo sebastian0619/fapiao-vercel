@@ -24,11 +24,36 @@
             <div class="card-body">
                 <form @submit.prevent="saveConfig">
                     <div class="mb-3">
+                        <label class="form-label">UI端口</label>
+                        <input type="number" class="form-control" v-model.number="config.ui_port">
+                        <div class="form-text">Web界面服务端口号（仅在本地部署时有效）</div>
+                    </div>
+                    <div class="mb-3">
                         <label class="form-label">管理员密码</label>
                         <input type="password" class="form-control" v-model="newPassword" placeholder="留空表示不修改密码">
                         <div class="form-text">设置新的管理员密码（默认用户名：admin）</div>
                     </div>
                     <button type="submit" class="btn btn-primary">保存系统配置</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Web UI配置 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Web UI配置</h5>
+            </div>
+            <div class="card-body">
+                <form @submit.prevent="saveWebUIConfig">
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" id="webUIRenameWithAmount" 
+                               v-model="config.webui_rename_with_amount">
+                        <label class="form-check-label" for="webUIRenameWithAmount">
+                            Web界面文件重命名时包含金额
+                        </label>
+                        <div class="form-text">此设置仅影响Web界面上传的文件处理</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">保存Web UI配置</button>
                 </form>
             </div>
         </div>
@@ -41,9 +66,11 @@
             <div class="card-body">
                 <div class="row">
                     <div class="col-md-6">
+                        <p><strong>环境：</strong> <span class="text-success">Vercel</span></p>
                         <p><strong>Web UI重命名带金额：</strong> [[ config.webui_rename_with_amount ? '是' : '否' ]]</p>
                     </div>
                     <div class="col-md-6">
+                        <p><strong>Web服务端口：</strong> [[ config.ui_port || 'Vercel托管' ]]</p>
                         <p><strong>版本：</strong> 1.0.0 (Vercel)</p>
                     </div>
                 </div>
@@ -66,6 +93,8 @@
                 async saveConfig() {
                     try {
                         const formData = new FormData();
+                        formData.append('ui_port', this.config.ui_port || 8000);
+                        
                         if (this.newPassword.trim()) {
                             formData.append('admin_password', this.newPassword);
                         }
@@ -77,6 +106,19 @@
                         }
                     } catch (error) {
                         alert('保存配置失败: ' + error.message);
+                    }
+                },
+                async saveWebUIConfig() {
+                    try {
+                        const formData = new FormData();
+                        formData.append('rename_with_amount', this.config.webui_rename_with_amount);
+
+                        const response = await axios.post('/user/config', formData);
+                        if (response.data.success) {
+                            alert('Web UI配置已保存');
+                        }
+                    } catch (error) {
+                        alert('保存Web UI配置失败: ' + error.message);
                     }
                 }
             }

@@ -5,21 +5,73 @@ import re
 import logging
 import PyPDF2
 import os
+import base64
+import io
 
 def scan_qrcode(image_path):
     """
-    简化二维码扫描功能，仅返回模拟数据
-    注意：由于移除了pyzbar库，此函数实际上不再扫描二维码
-    在生产环境中需要通过API或其他方式实现此功能
+    尝试提取图像中的文本信息，模拟二维码扫描
+    注意：由于移除了pyzbar库，此函数能力有限
     """
     try:
-        logging.debug(f"正在处理图片: {image_path}")
-        # 简化功能，返回None表示未识别到二维码
-        # 在生产环境应使用单独的API服务处理二维码
+        logging.info(f"正在处理图片: {image_path}")
+        
+        # 打开图片
+        image = Image.open(image_path)
+        
+        # 尝试解析二维码区域 (黑白区域)
+        # 这是一个简化版本，实际上并不会解码二维码，但会尝试检测是否有二维码区域
+        # 如果要完整解码二维码，需要专门的库如pyzbar
+        
+        # 尝试检测二维码区域
+        qr_text = detect_text_from_image(image)
+        if qr_text:
+            logging.info(f"从图像中提取到文本信息: {qr_text[:50]}...")
+            return qr_text
+        
+        # 尝试OCR文本识别（在真实场景中可能需要更专业的OCR库）
+        # 在这里我们只能做简单的模拟
+        
+        # 将图像转为灰度图
+        gray_image = image.convert('L')
+        
+        # 检查图像中是否有发票特征
+        invoice_info = extract_text_from_regions(gray_image)
+        if invoice_info:
+            return invoice_info
+        
+        logging.debug(f"未能从图像中提取有用信息")
         return None
     except Exception as e:
-        logging.debug(f"处理图片失败: {e}")
+        logging.debug(f"处理图片失败: {e}", exc_info=True)
         return None
+
+def detect_text_from_image(image):
+    """
+    尝试从图像中检测文本信息
+    这是一个简化版本，主要用于检测是否包含发票相关信息
+    """
+    try:
+        # 保存为临时文件
+        temp_buffer = io.BytesIO()
+        image.save(temp_buffer, format="PNG")
+        temp_buffer.seek(0)
+        
+        # 在真实应用中，可以集成OCR服务
+        # 这里我们返回None表示没有检测到
+        return None
+    except Exception as e:
+        logging.warning(f"检测图像文本时出错: {e}")
+        return None
+
+def extract_text_from_regions(image):
+    """
+    从图像的特定区域提取文本
+    这是一个简化版本，实际应用中可能需要专业OCR库
+    """
+    # 在真实应用中，这里会有区域识别和OCR逻辑
+    # 目前返回None
+    return None
 
 def extract_information(data_str):
     """

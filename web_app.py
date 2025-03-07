@@ -112,7 +112,7 @@ async def upload_files(files: List[UploadFile] = File(...)):
                     content = await file.read()
                     buffer.write(content)
                 
-                logging.info(f"已保存文件: {file_path}")
+                logging.info(f"已保存文件: {file_path}, 大小: {len(content)} 字节")
                 
                 # 处理文件
                 ext = os.path.splitext(file.filename)[1].lower()
@@ -135,6 +135,8 @@ async def upload_files(files: List[UploadFile] = File(...)):
                                 logging.warning(f"提取金额失败: {e}")
                     elif ext == '.ofd':
                         logging.info(f"开始处理OFD文件: {file_path}")
+                        # 确保tmp_dir存在
+                        os.makedirs(tmp_dir, exist_ok=True)
                         result = process_ofd(file_path, tmp_dir, False)
                         logging.info(f"OFD处理结果: {result}")
                         
@@ -234,8 +236,10 @@ async def update_config(
 @app.get("/admin", response_class=HTMLResponse)
 async def admin(request: Request, credentials: HTTPBasicCredentials = Depends(verify_admin)):
     """管理页面（需要密码验证）"""
-    # 在Vercel环境下，使用admin.html模板
+    # 在Vercel环境下，使用admin_vercel.html模板
     template_name = "admin.html"
+    if os.environ.get("VERCEL") == "1":
+        template_name = "admin_vercel.html"
     
     return templates.TemplateResponse(
         template_name,
