@@ -14,7 +14,8 @@ import secrets
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from config_manager import config
 from pdf_processor import process_special_pdf
-from ofd_processor import process_ofd
+from ofd_processor import process_ofd, extract_ofd_info_direct
+from data_extractor import extract_information_from_pdf
 import uvicorn
 
 # 配置日志
@@ -100,8 +101,14 @@ async def upload_files(files: List[UploadFile] = File(...)):
     processed_files = []
     
     try:
-        # 使用Web UI的配置
-        config.set("rename_with_amount", config.get("webui_rename_with_amount", False))
+        # 获取当前的配置状态
+        rename_with_amount = config.get("webui_rename_with_amount", False)
+        logging.info(f"当前配置: rename_with_amount={rename_with_amount}")
+        
+        # 暂时设置为False，确保提取金额但不包含在文件名中
+        if not rename_with_amount:
+            config.set("rename_with_amount", False)
+        
         logging.info(f"接收到{len(files)}个文件上传请求")
         
         for file in files:
@@ -122,32 +129,48 @@ async def upload_files(files: List[UploadFile] = File(...)):
                 try:
                     if ext == '.pdf':
                         logging.info(f"开始处理PDF文件: {file_path}")
+                        # 直接从PDF提取发票号和金额
+                        invoice_number, extracted_amount = extract_information_from_pdf(file_path)
+                        logging.info(f"从PDF中提取到信息 - 发票号: {invoice_number}, 金额: {extracted_amount}")
+                        
+                        # 记录金额信息，无论是否用于重命名
+                        amount = extracted_amount
+                        
+                        # 处理PDF文件
                         result = process_special_pdf(file_path)
                         logging.info(f"PDF处理结果: {result}")
                         
-                        if result:
+                        # 如果处理成功但没有金额信息，尝试从文件名获取
+                        if result and not amount:
                             try:
                                 amount_match = re.search(r'\[¥(\d+\.\d{2})\]', os.path.basename(result))
                                 if amount_match:
                                     amount = amount_match.group(1)
-                                    logging.info(f"提取到金额: {amount}")
+                                    logging.info(f"从文件名提取到金额: {amount}")
                             except Exception as e:
-                                logging.warning(f"提取金额失败: {e}")
+                                logging.warning(f"从文件名提取金额失败: {e}")
                     elif ext == '.ofd':
                         logging.info(f"开始处理OFD文件: {file_path}")
-                        # 确保tmp_dir存在
-                        os.makedirs(tmp_dir, exist_ok=True)
-                        result = process_ofd(file_path, tmp_dir, False)
+                        
+                        # 先尝试直接从OFD文件提取信息
+                        ofd_info = extract_ofd_info_direct(file_path)
+                        if ofd_info.get('amount'):
+                            amount = ofd_info.get('amount')
+                            logging.info(f"从OFD文件直接提取到金额: {amount}")
+                        
+                        # 处理OFD文件
+                        result = process_ofd(file_path, "", False)
                         logging.info(f"OFD处理结果: {result}")
                         
-                        if result:
+                        # 如果处理成功但没有金额信息，尝试从文件名获取
+                        if result and not amount:
                             try:
                                 amount_match = re.search(r'\[¥(\d+\.\d{2})\]', os.path.basename(result))
                                 if amount_match:
                                     amount = amount_match.group(1)
-                                    logging.info(f"提取到金额: {amount}")
+                                    logging.info(f"从文件名提取到金额: {amount}")
                             except Exception as e:
-                                logging.warning(f"提取金额失败: {e}")
+                                logging.warning(f"从文件名提取金额失败: {e}")
                     else:
                         logging.warning(f"不支持的文件类型: {ext}")
                 except Exception as file_process_error:
@@ -194,7 +217,7 @@ async def upload_files(files: List[UploadFile] = File(...)):
         return {"success": False, "error": str(e)}
     finally:
         # 恢复原始配置
-        config.set("rename_with_amount", config.get("webui_rename_with_amount", False))
+        config.set("rename_with_amount", rename_with_amount)
 
 @app.get("/download/{filename}")
 async def download_file(filename: str):
