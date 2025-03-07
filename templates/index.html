@@ -8,12 +8,59 @@
     <script src="https://cdn.jsdelivr.net/npm/vue@3.3.0/dist/vue.global.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <link href="/static/style.css" rel="stylesheet">
+    <style>
+        .log-container {
+            max-height: 500px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 0.85rem;
+            background-color: #1e1e1e;
+            color: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .log-entry {
+            padding: 2px 0;
+            border-bottom: 1px solid #333;
+        }
+        .log-timestamp {
+            color: #888;
+            margin-right: 8px;
+        }
+        .log-level-INFO {
+            color: #4CAF50;
+        }
+        .log-level-WARNING {
+            color: #FFC107;
+        }
+        .log-level-ERROR {
+            color: #F44336;
+        }
+        .log-level-DEBUG {
+            color: #2196F3;
+        }
+        .log-message {
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .debug-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+    </style>
 </head>
 <body>
     <div id="app" class="container mt-4">
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h1>发票处理系统</h1>
-            <a href="/admin" class="btn btn-outline-secondary">系统管理</a>
+            <div>
+                <button @click="showDebugLogs" class="btn btn-sm btn-outline-secondary me-2">
+                    <i class="bi bi-bug"></i> 调试
+                </button>
+                <a href="/admin" class="btn btn-outline-secondary">系统管理</a>
+            </div>
         </div>
 
         <!-- 用户配置部分 -->
@@ -99,8 +146,50 @@
                 </div>
             </div>
         </div>
+
+        <!-- 日志弹窗 -->
+        <div class="modal fade" id="debugLogModal" tabindex="-1" aria-labelledby="debugLogModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="debugLogModalLabel">系统日志</h5>
+                        <div class="d-flex">
+                            <select v-model="logLevel" class="form-select form-select-sm me-2" @change="fetchLogs">
+                                <option value="">所有级别</option>
+                                <option value="debug">DEBUG</option>
+                                <option value="info">INFO</option>
+                                <option value="warning">WARNING</option>
+                                <option value="error">ERROR</option>
+                            </select>
+                            <button @click="fetchLogs" class="btn btn-sm btn-outline-primary me-2">
+                                刷新
+                            </button>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <div class="log-container" ref="logContainer">
+                            <div v-for="(log, index) in logs" :key="index" class="log-entry">
+                                <span class="log-timestamp">[[ log.timestamp ]]</span>
+                                <span :class="'log-level-' + log.level">[[log.level]]</span>:
+                                <span class="log-message">[[ log.message ]]</span>
+                            </div>
+                            <div v-if="logs.length === 0" class="text-center text-muted py-4">
+                                没有日志记录
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
+    <!-- 引入Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
     <script>
         const { createApp } = Vue;
 
@@ -112,7 +201,12 @@
                     selectedFiles: [],
                     results: [],
                     processing: false,
-                    downloadUrl: null
+                    downloadUrl: null,
+                    // 日志相关
+                    logs: [],
+                    logLevel: '',
+                    debugModal: null,
+                    logPolling: null
                 };
             },
             computed: {
@@ -121,6 +215,15 @@
                         .filter(r => r.success && r.amount)
                         .reduce((sum, r) => sum + parseFloat(r.amount), 0);
                 }
+            },
+            mounted() {
+                // 初始化Modal组件
+                this.debugModal = new bootstrap.Modal(document.getElementById('debugLogModal'));
+                
+                // 监听modal关闭事件，停止轮询
+                document.getElementById('debugLogModal').addEventListener('hidden.bs.modal', () => {
+                    this.stopLogPolling();
+                });
             },
             methods: {
                 formatAmount(amount) {
@@ -186,6 +289,45 @@
                 downloadFiles() {
                     if (this.downloadUrl) {
                         window.location.href = this.downloadUrl;
+                    }
+                },
+                // 调试日志相关方法
+                showDebugLogs() {
+                    this.fetchLogs();
+                    this.debugModal.show();
+                    // 启动轮询获取最新日志
+                    this.startLogPolling();
+                },
+                async fetchLogs() {
+                    try {
+                        const params = { limit: 100 };
+                        if (this.logLevel) {
+                            params.level = this.logLevel;
+                        }
+                        const response = await axios.get('/api/logs', { params });
+                        this.logs = response.data.logs || [];
+                        
+                        // 滚动到底部
+                        this.$nextTick(() => {
+                            if (this.$refs.logContainer) {
+                                this.$refs.logContainer.scrollTop = this.$refs.logContainer.scrollHeight;
+                            }
+                        });
+                    } catch (error) {
+                        console.error('获取日志失败:', error);
+                    }
+                },
+                startLogPolling() {
+                    // 每5秒轮询一次日志
+                    this.stopLogPolling(); // 确保之前的轮询已停止
+                    this.logPolling = setInterval(() => {
+                        this.fetchLogs();
+                    }, 5000);
+                },
+                stopLogPolling() {
+                    if (this.logPolling) {
+                        clearInterval(this.logPolling);
+                        this.logPolling = null;
                     }
                 }
             }

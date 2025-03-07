@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import os
 import logging
-from typing import List
+from typing import List, Dict, Any
 import shutil
 from datetime import datetime
 import zipfile
@@ -17,12 +17,58 @@ from pdf_processor import process_special_pdf
 from ofd_processor import process_ofd, extract_ofd_info_direct
 from data_extractor import extract_information_from_pdf
 import uvicorn
+import threading
+import io
+import time
+
+# 配置日志
+# 创建一个内存日志处理器，用于存储最近的日志
+class MemoryLogHandler(logging.Handler):
+    def __init__(self, capacity=1000):
+        super().__init__()
+        self.capacity = capacity
+        self.log_records = []
+        self.lock = threading.Lock()
+        
+    def emit(self, record):
+        with self.lock:
+            # 格式化日志记录
+            message = self.format(record)
+            timestamp = datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+            log_entry = {
+                'timestamp': timestamp,
+                'level': record.levelname,
+                'message': message,
+                'logger': record.name
+            }
+            
+            # 添加日志记录，保持日志数量在容量范围内
+            self.log_records.append(log_entry)
+            if len(self.log_records) > self.capacity:
+                self.log_records = self.log_records[-self.capacity:]
+                
+    def get_logs(self, limit=100, level=None):
+        """获取最近的日志记录"""
+        with self.lock:
+            if level:
+                filtered_logs = [log for log in self.log_records if log['level'] == level.upper()]
+                return filtered_logs[-limit:]
+            return self.log_records[-limit:]
+
+# 创建内存日志处理器
+memory_handler = MemoryLogHandler(capacity=1000)
+memory_handler.setLevel(logging.DEBUG)
+memory_handler.setFormatter(logging.Formatter('%(message)s'))
 
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+
+# 将内存处理器添加到根日志记录器
+root_logger = logging.getLogger()
+root_logger.addHandler(memory_handler)
 
 app = FastAPI(title="发票处理系统")
 
@@ -308,6 +354,16 @@ async def update_user_config(
             status_code=400,
             content={"success": False, "error": str(e)}
         )
+
+@app.get("/api/logs", response_class=JSONResponse)
+async def get_logs(limit: int = 100, level: str = None):
+    """获取最近的日志记录"""
+    if level and level.upper() not in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']:
+        level = None
+    
+    logs = memory_handler.get_logs(limit=limit, level=level)
+    logging.info(f"获取日志记录: {len(logs)} 条, 级别: {level or '所有'}")
+    return {"logs": logs}
 
 if __name__ == "__main__":
     port = config.get("ui_port", 8000)
