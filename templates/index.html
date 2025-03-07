@@ -56,9 +56,6 @@
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h1>发票处理系统</h1>
             <div>
-                <button @click="showDebugLogs" class="btn btn-sm btn-outline-secondary me-2">
-                    <i class="bi bi-bug"></i> 调试
-                </button>
                 <a href="/admin" class="btn btn-outline-secondary">系统管理</a>
             </div>
         </div>
@@ -104,7 +101,7 @@
         </div>
 
         <!-- 处理结果 -->
-        <div v-if="results.length" class="card">
+        <div v-if="results.length" class="card mb-4">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="card-title mb-0">处理结果</h5>
                 <button v-if="downloadUrl" 
@@ -147,43 +144,43 @@
             </div>
         </div>
 
-        <!-- 日志弹窗 -->
-        <div class="modal fade" id="debugLogModal" tabindex="-1" aria-labelledby="debugLogModalLabel" aria-hidden="true">
-            <div class="modal-dialog modal-xl modal-dialog-scrollable">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title" id="debugLogModalLabel">系统日志</h5>
-                        <div class="d-flex">
-                            <select v-model="logLevel" class="form-select form-select-sm me-2" @change="fetchLogs">
-                                <option value="">所有级别</option>
-                                <option value="debug">DEBUG</option>
-                                <option value="info">INFO</option>
-                                <option value="warning">WARNING</option>
-                                <option value="error">ERROR</option>
-                            </select>
-                            <button @click="fetchLogs" class="btn btn-sm btn-outline-primary me-2">
-                                刷新
-                            </button>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                        </div>
+        <!-- 调试日志区域 -->
+        <div class="card mb-4" v-if="showDebug">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">系统日志</h5>
+                <div class="d-flex">
+                    <select v-model="logLevel" class="form-select form-select-sm me-2" @change="fetchLogs">
+                        <option value="">所有级别</option>
+                        <option value="debug">DEBUG</option>
+                        <option value="info">INFO</option>
+                        <option value="warning">WARNING</option>
+                        <option value="error">ERROR</option>
+                    </select>
+                    <button @click="fetchLogs" class="btn btn-sm btn-outline-secondary me-2">
+                        刷新
+                    </button>
+                    <button @click="clearLogs" class="btn btn-sm btn-outline-danger">
+                        清空
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="log-container" ref="logContainer" style="max-height: 400px;">
+                    <div v-for="(log, index) in logs" :key="index" class="log-entry">
+                        <span class="log-timestamp">[[ log.timestamp ]]</span>
+                        <span :class="'log-level-' + log.level">[[log.level]]</span>:
+                        <span class="log-message">[[ log.message ]]</span>
                     </div>
-                    <div class="modal-body">
-                        <div class="log-container" ref="logContainer">
-                            <div v-for="(log, index) in logs" :key="index" class="log-entry">
-                                <span class="log-timestamp">[[ log.timestamp ]]</span>
-                                <span :class="'log-level-' + log.level">[[log.level]]</span>:
-                                <span class="log-message">[[ log.message ]]</span>
-                            </div>
-                            <div v-if="logs.length === 0" class="text-center text-muted py-4">
-                                没有日志记录
-                            </div>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                    <div v-if="logs.length === 0" class="text-center text-muted py-4">
+                        没有日志记录
                     </div>
                 </div>
             </div>
+        </div>
+
+        <div class="form-check form-switch position-fixed" style="bottom: 20px; right: 20px; z-index: 1000;">
+            <input class="form-check-input" type="checkbox" id="debugToggle" v-model="showDebug" @change="toggleDebug">
+            <label class="form-check-label" for="debugToggle">显示调试日志</label>
         </div>
     </div>
 
@@ -205,7 +202,7 @@
                     // 日志相关
                     logs: [],
                     logLevel: '',
-                    debugModal: null,
+                    showDebug: false,
                     logPolling: null
                 };
             },
@@ -217,13 +214,14 @@
                 }
             },
             mounted() {
-                // 初始化Modal组件
-                this.debugModal = new bootstrap.Modal(document.getElementById('debugLogModal'));
-                
-                // 监听modal关闭事件，停止轮询
-                document.getElementById('debugLogModal').addEventListener('hidden.bs.modal', () => {
-                    this.stopLogPolling();
-                });
+                // 从localStorage中恢复调试开关状态
+                const savedDebugState = localStorage.getItem('showDebug');
+                if (savedDebugState !== null) {
+                    this.showDebug = savedDebugState === 'true';
+                    if (this.showDebug) {
+                        this.startLogPolling();
+                    }
+                }
             },
             methods: {
                 formatAmount(amount) {
@@ -291,12 +289,16 @@
                         window.location.href = this.downloadUrl;
                     }
                 },
-                // 调试日志相关方法
-                showDebugLogs() {
-                    this.fetchLogs();
-                    this.debugModal.show();
-                    // 启动轮询获取最新日志
-                    this.startLogPolling();
+                // 调试相关方法
+                toggleDebug() {
+                    if (this.showDebug) {
+                        this.fetchLogs();
+                        this.startLogPolling();
+                    } else {
+                        this.stopLogPolling();
+                    }
+                    // 保存调试开关状态到localStorage
+                    localStorage.setItem('showDebug', this.showDebug);
                 },
                 async fetchLogs() {
                     try {
@@ -329,6 +331,9 @@
                         clearInterval(this.logPolling);
                         this.logPolling = null;
                     }
+                },
+                clearLogs() {
+                    this.logs = [];
                 }
             }
         }).mount('#app');
