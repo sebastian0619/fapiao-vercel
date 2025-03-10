@@ -51,9 +51,20 @@ except ImportError as e:
         logging.warning("OpenCV二维码识别也不可用")
         QRCODE_SUPPORT = False
 
+# 尝试导入轻量级QR码库
+try:
+    from qreader import QReader
+    QRCODE_SUPPORT = True
+    logging.info("二维码支持已启用（使用qreader库）")
+    # 初始化QR码读取器
+    qreader = QReader()
+except ImportError as e:
+    QRCODE_SUPPORT = False
+    logging.warning(f"二维码支持已禁用: {e}")
+
 def scan_qrcode(image_path):
     """
-    使用纯Python库扫描二维码
+    使用轻量级库扫描二维码
     """
     if not QRCODE_SUPPORT:
         logging.info("二维码支持不可用，跳过扫描")
@@ -62,60 +73,50 @@ def scan_qrcode(image_path):
     try:
         logging.info(f"扫描二维码: {image_path}")
         
-        # 尝试使用pyzxing读取二维码
-        try:
-            # pyzxing是基于Java的zxing库的Python封装，工作在所有环境中
-            results = reader.decode(image_path)
-            if results:
-                for result in results:
-                    if 'parsed' in result:
-                        qr_data = result['parsed']
-                        logging.info(f"成功识别二维码(pyzxing): {qr_data[:50]}...")
-                        return qr_data
-        except Exception as e:
-            logging.warning(f"pyzxing解码失败: {e}")
+        # 使用PIL加载图像
+        img = Image.open(image_path)
+        # 转换为RGB模式确保兼容性
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
             
-        # 如果pyzxing失败，尝试使用OpenCV
-        try:
-            # 读取图像
-            image = cv2.imread(image_path)
-            if image is None:
-                # 如果cv2.imread失败，尝试使用PIL读取再转换
-                pil_image = Image.open(image_path)
-                image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-                
-            # 转为灰度图
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            
-            # 使用OpenCV的QRCodeDetector
-            qr_detector = cv2.QRCodeDetector()
-            data, bbox, _ = qr_detector.detectAndDecode(gray)
-            
-            if data:
-                logging.info(f"成功识别二维码(OpenCV): {data[:50]}...")
-                return data
-                
-            # 尝试不同的预处理方法
-            # 1. 应用高斯模糊减少噪声
-            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-            data, bbox, _ = qr_detector.detectAndDecode(blurred)
-            if data:
-                logging.info(f"成功识别二维码(OpenCV-模糊): {data[:50]}...")
-                return data
-                
-            # 2. 应用自适应阈值
-            thresh = cv2.adaptiveThreshold(
-                gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                cv2.THRESH_BINARY, 11, 2
-            )
-            data, bbox, _ = qr_detector.detectAndDecode(thresh)
-            if data:
-                logging.info(f"成功识别二维码(OpenCV-阈值): {data[:50]}...")
-                return data
-                
-        except Exception as e:
-            logging.warning(f"OpenCV二维码解码失败: {e}")
+        # 调整图像大小以提高处理速度
+        if img.width > 1000 or img.height > 1000:
+            scale = min(1000 / img.width, 1000 / img.height)
+            new_size = (int(img.width * scale), int(img.height * scale))
+            img = img.resize(new_size, Image.LANCZOS)
         
+        # 将PIL图像转换为numpy数组
+        img_array = np.array(img)
+        
+        # 使用qreader识别二维码
+        decoded_text = qreader.detect_and_decode(image=img_array)
+        
+        if decoded_text:
+            logging.info(f"成功识别二维码: {decoded_text[:50]}...")
+            return decoded_text
+        
+        # 如果识别失败，尝试不同的图像处理方法
+        logging.info("标准识别失败，尝试图像增强...")
+        
+        # 尝试转为灰度图并调整对比度
+        gray_img = img.convert('L')
+        # 增强对比度
+        from PIL import ImageEnhance
+        enhancer = ImageEnhance.Contrast(gray_img)
+        enhanced_img = enhancer.enhance(2.0)  # 增强对比度
+        
+        # 转换为numpy数组
+        enhanced_array = np.array(enhanced_img)
+        
+        # 再次尝试识别
+        try:
+            decoded_text = qreader.detect_and_decode(image=enhanced_array)
+            if decoded_text:
+                logging.info(f"增强后成功识别二维码: {decoded_text[:50]}...")
+                return decoded_text
+        except Exception as e:
+            logging.warning(f"增强识别失败: {e}")
+            
         logging.warning(f"未能在图像中识别到二维码: {image_path}")
         return None
     except Exception as e:
@@ -203,10 +204,70 @@ def extract_information(data_str):
     
     return invoice_number, amount
 
+def extract_images_from_pdf(pdf_path, max_pages=3):
+    """
+    使用PyPDF2和Pillow从PDF中提取图像
+    这是一个简化的图像提取器，不需要PyMuPDF
+    """
+    images = []
+    try:
+        logging.info(f"从PDF提取图像(轻量级方法): {pdf_path}")
+        # 打开PDF
+        with open(pdf_path, 'rb') as f:
+            reader = PyPDF2.PdfReader(f)
+            
+            # 限制处理的页面数量
+            num_pages = min(len(reader.pages), max_pages)
+            logging.info(f"处理PDF前{num_pages}页（共{len(reader.pages)}页）")
+            
+            # 提取整页图像
+            for page_num in range(num_pages):
+                try:
+                    # 创建一个临时文件用于保存整页图像
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_file:
+                        temp_path = temp_file.name
+                    
+                    # 使用一个简单的方法将PDF页面渲染为图像
+                    # 注意：这种方法质量较低，但不需要大型依赖库
+                    # 我们只需要能够识别二维码
+                    command = f"pdftoppm -png -f {page_num+1} -l {page_num+1} -r 150 '{pdf_path}' '{os.path.splitext(temp_path)[0]}'"
+                    
+                    try:
+                        # 尝试使用系统命令提取图像
+                        result = os.system(command)
+                        if result == 0:
+                            # 查找生成的文件
+                            output_pattern = f"{os.path.splitext(temp_path)[0]}-*.png"
+                            import glob
+                            output_files = glob.glob(output_pattern)
+                            if output_files:
+                                with open(output_files[0], 'rb') as img_file:
+                                    images.append(img_file.read())
+                                # 清理临时文件
+                                for f in output_files:
+                                    os.remove(f)
+                    except Exception as cmd_e:
+                        logging.warning(f"命令行提取失败: {cmd_e}, 尝试使用Pillow")
+                        # 如果命令行工具不可用，尝试备选方法
+                        pass
+                    
+                    # 清理临时文件
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                    
+                except Exception as page_e:
+                    logging.warning(f"处理第{page_num+1}页时出错: {page_e}")
+        
+        logging.info(f"成功从PDF提取了{len(images)}张图像")
+        return images
+    except Exception as e:
+        logging.error(f"提取PDF图像时出错: {e}", exc_info=True)
+        return []
+
 def extract_information_from_pdf(file_path):
     """
     从PDF文件中提取发票信息
-    优先使用二维码方式（如果可用），如果失败再尝试文本提取
+    优先使用二维码方式，如果失败再尝试文本提取
     """
     try:
         logging.info(f"从PDF文件提取信息: {file_path}")
@@ -214,35 +275,43 @@ def extract_information_from_pdf(file_path):
         # 步骤1: 如果二维码支持可用，则尝试从PDF提取图像并识别二维码
         if QRCODE_SUPPORT:
             try:
-                from pdf_processor import convert_to_image_memory
-                images = convert_to_image_memory(file_path)
+                # 使用轻量级方法提取图像
+                images = extract_images_from_pdf(file_path)
                 
-                # 确保有临时目录
-                temp_dir = tempfile.gettempdir()  # 使用系统临时目录
+                # 如果提取图像失败，尝试从现有页面提取信息
+                if not images:
+                    logging.warning("未能提取图像，尝试直接从PDF页面提取二维码")
+                    # 此处可以添加备选方法...
                 
-                # 从图像中提取二维码信息
+                # 创建临时目录用于保存图像
+                temp_dir = tempfile.gettempdir()
+                
+                # 处理每个提取的图像
                 for idx, img_data in enumerate(images):
-                    # 从内存中加载图像
-                    img = Image.open(io.BytesIO(img_data))
-                    # 保存临时图像文件用于二维码扫描
-                    temp_img_path = os.path.join(temp_dir, f"temp_qr_img_{idx}.png")
-                    img.save(temp_img_path)
-                    
-                    # 扫描二维码
-                    qr_data = scan_qrcode(temp_img_path)
-                    
-                    # 清理临时文件
                     try:
-                        os.remove(temp_img_path)
-                    except Exception as e:
-                        logging.warning(f"无法删除临时文件 {temp_img_path}: {e}")
+                        # 保存临时图像文件用于二维码扫描
+                        temp_img_path = os.path.join(temp_dir, f"temp_qr_img_{idx}.png")
+                        with open(temp_img_path, 'wb') as img_file:
+                            img_file.write(img_data)
                         
-                    # 如果找到二维码信息，从中提取发票信息
-                    if qr_data:
-                        invoice_number, amount = extract_information(qr_data)
-                        if invoice_number:
-                            logging.info(f"成功从二维码提取到信息 - 发票号: {invoice_number}, 金额: {amount}")
-                            return invoice_number, amount
+                        # 扫描二维码
+                        qr_data = scan_qrcode(temp_img_path)
+                        
+                        # 清理临时文件
+                        try:
+                            os.remove(temp_img_path)
+                        except Exception as e:
+                            logging.warning(f"无法删除临时文件 {temp_img_path}: {e}")
+                            
+                        # 如果找到二维码信息，从中提取发票信息
+                        if qr_data:
+                            invoice_number, amount = extract_information(qr_data)
+                            if invoice_number:
+                                logging.info(f"成功从二维码提取到信息 - 发票号: {invoice_number}, 金额: {amount}")
+                                return invoice_number, amount
+                    except Exception as img_e:
+                        logging.warning(f"处理图像{idx}时出错: {img_e}")
+                        continue
             except Exception as e:
                 logging.warning(f"从PDF提取图像并识别二维码失败: {e}")
         else:

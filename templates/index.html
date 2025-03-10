@@ -88,8 +88,8 @@
                             </div>
                         </div>
                         <div class="mt-2 text-muted small">
-                            <strong>提示：</strong> 本系统已使用纯Python实现的二维码识别功能，可以在Vercel环境中正常工作。
-                            系统会优先尝试使用二维码获取发票信息，失败时会自动回退到文本提取方法。
+                            <strong>提示：</strong> 本系统使用轻量级二维码识别库(qreader)，可以在Vercel环境中正常工作。
+                            系统会优先尝试从发票中识别二维码获取信息，如果失败会自动使用文本提取作为备选方案。
                         </div>
                     </div>
                     <div v-if="selectedFiles.length" class="mb-3">

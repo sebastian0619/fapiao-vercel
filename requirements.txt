@@ -8,15 +8,15 @@ pillow==10.2.0
 numpy==1.26.1
 requests==2.31.0
 
-# 二维码识别 - 使用不依赖系统库的纯Python实现
-# 可以在Vercel环境中工作
-opencv-python-headless==4.8.1.78
-pyzxing==1.0.2  # 纯Python的二维码库
-# 用于PDF图像处理
-PyMuPDF==1.23.8
+# 轻量级二维码识别方案
+qreader==1.3.0  # 轻量级Python二维码库
 
-# 可选依赖 - 这些可能在Vercel环境中不可用
-# 如果安装失败，应用程序将降级使用备用功能
-# pyzbar==0.1.9    # 用于二维码读取 (需要zbar系统库)
+# 可选依赖 - 这些可能导致函数体积过大
+# opencv-python-headless==4.8.1.78  # 过大，导致函数超过Vercel大小限制
+# pyzxing==1.0.2  # 依赖Java，在Vercel环境中不可用
+# PyMuPDF==1.23.8  # 较大，当与其他库结合时可能导致大小问题
+
+# 不适用于Vercel环境的依赖
+# pyzbar==0.1.9    # 需要系统库zbar
 # defusedxml==0.7.1  # 用于XML解析
 # lxml==4.9.3        # 用于XML解析

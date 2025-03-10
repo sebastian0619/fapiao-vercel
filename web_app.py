@@ -19,12 +19,6 @@ from data_extractor import extract_information_from_pdf
 import uvicorn
 
 # 检查可选功能的可用性
-# 这些导入检查是在web_app.py启动时进行的，因此不会阻塞应用运行
-try:
-    from pdf_processor import PYMUPDF_SUPPORT
-except ImportError:
-    PYMUPDF_SUPPORT = False
-
 try:
     from data_extractor import QRCODE_SUPPORT
 except ImportError:
@@ -52,10 +46,9 @@ def add_log_entry(level, message):
 # 添加初始日志
 add_log_entry('INFO', '发票处理系统启动')
 add_log_entry('INFO', f"运行环境: {'Vercel' if os.environ.get('VERCEL') == '1' else '本地'}")
-add_log_entry('INFO', f"二维码支持: {'可用' if QRCODE_SUPPORT else '不可用'}")
-add_log_entry('INFO', f"PDF图像提取支持: {'可用' if PYMUPDF_SUPPORT else '不可用'}")
+add_log_entry('INFO', f"二维码支持: {'可用 (qreader)' if QRCODE_SUPPORT else '不可用'}")
 if not QRCODE_SUPPORT:
-    add_log_entry('WARNING', '二维码识别功能不可用，请检查pyzxing和OpenCV库的安装')
+    add_log_entry('WARNING', '二维码识别功能不可用，请检查qreader库的安装')
 
 # 确保目录存在
 tmp_dir = "/tmp"
@@ -143,12 +136,9 @@ async def get_logs(limit: int = 100, level: str = None, test: bool = False):
             add_log_entry('ERROR', '这是一条测试ERROR日志')
             # 添加系统状态信息
             add_log_entry('INFO', f"运行环境: {'Vercel' if os.environ.get('VERCEL') == '1' else '本地'}")
-            add_log_entry('INFO', f"二维码支持: {'可用 (使用pyzxing/OpenCV)' if QRCODE_SUPPORT else '不可用'}")
-            add_log_entry('INFO', f"PDF图像提取支持: {'可用' if PYMUPDF_SUPPORT else '不可用'}")
+            add_log_entry('INFO', f"二维码支持: {'可用 (qreader)' if QRCODE_SUPPORT else '不可用'}")
             if not QRCODE_SUPPORT:
-                add_log_entry('WARNING', '二维码识别功能不可用 - 请检查pyzxing和OpenCV库是否正确安装')
-            if not PYMUPDF_SUPPORT:
-                add_log_entry('WARNING', 'PDF图像提取功能不可用 - 缺少PyMuPDF库')
+                add_log_entry('WARNING', '二维码识别功能不可用 - 请检查qreader库是否正确安装')
         
         # 根据级别过滤日志
         filtered_logs = logs_buffer
