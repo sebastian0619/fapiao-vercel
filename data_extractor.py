@@ -1,17 +1,42 @@
 from PIL import Image
 import re
 # import fitz  # PyMuPDF, 用于读取PDF文件
-from pyzbar.pyzbar import decode
 import logging
 import PyPDF2
 import os
 import base64
 import io
 
+# 检查环境变量，明确禁用二维码支持
+NO_ZBAR_REQUIRED = os.environ.get("NO_ZBAR_REQUIRED", "0") == "1"
+if NO_ZBAR_REQUIRED:
+    logging.warning("环境变量NO_ZBAR_REQUIRED=1，将禁用二维码支持")
+    QRCODE_SUPPORT = False
+    # 定义一个空函数作为替代
+    def decode(image):
+        return []
+else:
+    # 尝试导入pyzbar，但在缺少系统依赖时不会崩溃
+    try:
+        from pyzbar.pyzbar import decode
+        QRCODE_SUPPORT = True
+        logging.info("二维码支持已启用（pyzbar库成功加载）")
+    except ImportError as e:
+        QRCODE_SUPPORT = False
+        logging.warning(f"二维码支持已禁用: {e}")
+        # 定义一个空函数作为替代
+        def decode(image):
+            return []
+
 def scan_qrcode(image_path):
     """
-    使用pyzbar扫描二维码
+    使用pyzbar扫描二维码（如果可用）
     """
+    # 如果没有二维码支持，直接返回None
+    if not QRCODE_SUPPORT:
+        logging.info("二维码支持不可用，跳过扫描")
+        return None
+        
     try:
         logging.info(f"扫描二维码: {image_path}")
         image = Image.open(image_path)
@@ -136,43 +161,56 @@ def extract_information(data_str):
 def extract_information_from_pdf(file_path):
     """
     从PDF文件中提取发票信息
-    优先使用二维码方式，如果失败再尝试文本提取
+    优先使用二维码方式（如果可用），如果失败再尝试文本提取
     """
     try:
         logging.info(f"从PDF文件提取信息: {file_path}")
         
-        # 步骤1: 尝试从PDF提取图像并识别二维码
-        try:
-            from pdf_processor import convert_to_image_memory
-            images = convert_to_image_memory(file_path)
-            
-            # 从图像中提取二维码信息
-            for idx, img_data in enumerate(images):
-                img = Image.open(io.BytesIO(img_data))
-                # 保存临时图像文件用于二维码扫描
-                temp_img_path = f"/tmp/temp_qr_img_{idx}.png"
-                img.save(temp_img_path)
+        # 步骤1: 如果二维码支持可用，则尝试从PDF提取图像并识别二维码
+        if QRCODE_SUPPORT:
+            try:
+                from pdf_processor import convert_to_image_memory
+                images = convert_to_image_memory(file_path)
                 
-                # 扫描二维码
-                qr_data = scan_qrcode(temp_img_path)
+                # 确保有临时目录
+                temp_dir = "/tmp"
+                if os.environ.get("VERCEL") == "1":
+                    # 在Vercel环境中使用/tmp目录
+                    temp_dir = "/tmp"
+                else:
+                    # 本地环境使用当前目录的temp子目录
+                    temp_dir = os.path.join(os.path.dirname(__file__), "temp")
+                    os.makedirs(temp_dir, exist_ok=True)
                 
-                # 清理临时文件
-                try:
-                    os.remove(temp_img_path)
-                except:
-                    pass
+                # 从图像中提取二维码信息
+                for idx, img_data in enumerate(images):
+                    img = Image.open(io.BytesIO(img_data))
+                    # 保存临时图像文件用于二维码扫描
+                    temp_img_path = os.path.join(temp_dir, f"temp_qr_img_{idx}.png")
+                    img.save(temp_img_path)
                     
-                # 如果找到二维码信息，从中提取发票信息
-                if qr_data:
-                    invoice_number, amount = extract_information(qr_data)
-                    if invoice_number:
-                        logging.info(f"成功从二维码提取到信息 - 发票号: {invoice_number}, 金额: {amount}")
-                        return invoice_number, amount
-        except Exception as e:
-            logging.warning(f"从PDF提取图像并识别二维码失败: {e}")
+                    # 扫描二维码
+                    qr_data = scan_qrcode(temp_img_path)
+                    
+                    # 清理临时文件
+                    try:
+                        os.remove(temp_img_path)
+                    except Exception as e:
+                        logging.warning(f"无法删除临时文件 {temp_img_path}: {e}")
+                        
+                    # 如果找到二维码信息，从中提取发票信息
+                    if qr_data:
+                        invoice_number, amount = extract_information(qr_data)
+                        if invoice_number:
+                            logging.info(f"成功从二维码提取到信息 - 发票号: {invoice_number}, 金额: {amount}")
+                            return invoice_number, amount
+            except Exception as e:
+                logging.warning(f"从PDF提取图像并识别二维码失败: {e}")
+        else:
+            logging.info("二维码支持不可用，直接使用文本提取")
             
         # 步骤2: 如果二维码提取失败，回退到文本提取方法
-        logging.info("二维码提取失败，尝试从文本提取信息")
+        logging.info("尝试从文本提取信息")
         text = ""
         # 使用PyPDF2提取文本
         with open(file_path, 'rb') as file:

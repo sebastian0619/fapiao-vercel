@@ -18,6 +18,18 @@ from ofd_processor import process_ofd, extract_ofd_info_direct
 from data_extractor import extract_information_from_pdf
 import uvicorn
 
+# 检查可选功能的可用性
+# 这些导入检查是在web_app.py启动时进行的，因此不会阻塞应用运行
+try:
+    from pdf_processor import PYMUPDF_SUPPORT
+except ImportError:
+    PYMUPDF_SUPPORT = False
+
+try:
+    from data_extractor import QRCODE_SUPPORT
+except ImportError:
+    QRCODE_SUPPORT = False
+
 # 配置简单的日志系统
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -37,8 +49,13 @@ def add_log_entry(level, message):
     if len(logs_buffer) > max_logs:
         logs_buffer.pop(0)
 
-# 添加一条初始日志
+# 添加初始日志
 add_log_entry('INFO', '发票处理系统启动')
+add_log_entry('INFO', f"运行环境: {'Vercel' if os.environ.get('VERCEL') == '1' else '本地'}")
+add_log_entry('INFO', f"二维码支持: {'可用' if QRCODE_SUPPORT else '不可用'}")
+add_log_entry('INFO', f"PDF图像提取支持: {'可用' if PYMUPDF_SUPPORT else '不可用'}")
+if not QRCODE_SUPPORT:
+    add_log_entry('WARNING', '二维码识别功能不可用，将使用纯文本提取方法')
 
 # 确保目录存在
 tmp_dir = "/tmp"
@@ -124,18 +141,29 @@ async def get_logs(limit: int = 100, level: str = None, test: bool = False):
             add_log_entry('INFO', '这是一条测试INFO日志')
             add_log_entry('WARNING', '这是一条测试WARNING日志')
             add_log_entry('ERROR', '这是一条测试ERROR日志')
+            # 添加系统状态信息
+            add_log_entry('INFO', f"运行环境: {'Vercel' if os.environ.get('VERCEL') == '1' else '本地'}")
+            add_log_entry('INFO', f"二维码支持: {'可用' if QRCODE_SUPPORT else '不可用'}")
+            add_log_entry('INFO', f"PDF图像提取支持: {'可用' if PYMUPDF_SUPPORT else '不可用'}")
+            if not QRCODE_SUPPORT:
+                add_log_entry('WARNING', '二维码识别功能不可用 - 缺少系统依赖库zbar')
+            if not PYMUPDF_SUPPORT:
+                add_log_entry('WARNING', 'PDF图像提取功能不可用 - 缺少PyMuPDF库')
         
-        # 根据级别筛选日志
+        # 根据级别过滤日志
         filtered_logs = logs_buffer
         if level:
             level = level.upper()
             filtered_logs = [log for log in logs_buffer if log['level'] == level]
         
-        # 返回最近的日志，最多limit条
-        return {"logs": filtered_logs[-limit:] if filtered_logs else []}
-    
+        # 限制返回的日志数量
+        log_count = min(limit, len(filtered_logs))
+        limited_logs = filtered_logs[-log_count:] if log_count > 0 else []
+        
+        return {"logs": limited_logs, "count": len(limited_logs), "total": len(logs_buffer)}
     except Exception as e:
-        logging.error(f"获取日志出错: {str(e)}")
+        # 记录错误
+        add_log_entry('ERROR', f'获取日志时出错: {str(e)}')
         return {"logs": [], "error": str(e)}
 
 @app.post("/upload")

@@ -3,11 +3,19 @@ import logging
 import re
 import PyPDF2
 import io
-import fitz  # PyMuPDF
 from PIL import Image
 from config_manager import config
 from data_extractor import extract_information_from_pdf
 from datetime import datetime
+
+# 尝试导入PyMuPDF (fitz)，但在导入失败时不会崩溃
+try:
+    import fitz
+    PYMUPDF_SUPPORT = True
+    logging.info("PDF图像提取支持已启用 (PyMuPDF库成功加载)")
+except ImportError as e:
+    PYMUPDF_SUPPORT = False
+    logging.warning(f"PDF图像提取支持已禁用: {e}")
 
 def create_new_filename(invoice_number, amount=None, original_path=None):
     """根据配置创建新文件名"""
@@ -86,6 +94,11 @@ def convert_to_image_memory(pdf_path, zoom_x=2.0, zoom_y=2.0):
     Returns:
         图像二进制数据列表
     """
+    # 如果PyMuPDF不可用，返回空列表
+    if not PYMUPDF_SUPPORT:
+        logging.warning("PyMuPDF库不可用，无法提取PDF图像")
+        return []
+        
     try:
         logging.info(f"从PDF提取图像: {pdf_path}")
         
@@ -136,6 +149,11 @@ def extract_pages_as_images(pdf_path, output_dir=None, prefix="page", format="pn
     Returns:
         保存的图像文件路径列表
     """
+    # 如果PyMuPDF不可用，返回空列表
+    if not PYMUPDF_SUPPORT:
+        logging.warning("PyMuPDF库不可用，无法提取PDF页面为图像")
+        return []
+        
     try:
         # 如果未指定输出目录，使用PDF所在目录
         if not output_dir:
