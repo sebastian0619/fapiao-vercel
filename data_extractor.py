@@ -6,6 +6,11 @@ import PyPDF2
 import os
 import base64
 import io
+import tempfile
+import json
+import subprocess
+import cv2
+import numpy as np
 
 # 检查环境变量，明确禁用二维码支持
 NO_ZBAR_REQUIRED = os.environ.get("NO_ZBAR_REQUIRED", "0") == "1"
@@ -28,49 +33,89 @@ else:
         def decode(image):
             return []
 
+# 我们将使用pyzxing库，这是一个纯Python的二维码库
+try:
+    from pyzxing import BarCodeReader
+    QRCODE_SUPPORT = True
+    logging.info("二维码支持已启用（使用pyzxing库）")
+    # 初始化条形码/二维码读取器
+    reader = BarCodeReader()
+except ImportError as e:
+    QRCODE_SUPPORT = False
+    logging.warning(f"二维码支持已禁用 (pyzxing导入失败): {e}")
+    # 如果pyzxing不可用，尝试使用OpenCV
+    try:
+        logging.info("尝试使用OpenCV进行二维码识别")
+        QRCODE_SUPPORT = True
+    except:
+        logging.warning("OpenCV二维码识别也不可用")
+        QRCODE_SUPPORT = False
+
 def scan_qrcode(image_path):
     """
-    使用pyzbar扫描二维码（如果可用）
+    使用纯Python库扫描二维码
     """
-    # 如果没有二维码支持，直接返回None
     if not QRCODE_SUPPORT:
         logging.info("二维码支持不可用，跳过扫描")
         return None
         
     try:
         logging.info(f"扫描二维码: {image_path}")
-        image = Image.open(image_path)
         
-        # 如果图片太大，调整大小以提高处理速度
-        if image.width > 1500 or image.height > 1500:
-            image.thumbnail((1500, 1500), Image.LANCZOS)
+        # 尝试使用pyzxing读取二维码
+        try:
+            # pyzxing是基于Java的zxing库的Python封装，工作在所有环境中
+            results = reader.decode(image_path)
+            if results:
+                for result in results:
+                    if 'parsed' in result:
+                        qr_data = result['parsed']
+                        logging.info(f"成功识别二维码(pyzxing): {qr_data[:50]}...")
+                        return qr_data
+        except Exception as e:
+            logging.warning(f"pyzxing解码失败: {e}")
+            
+        # 如果pyzxing失败，尝试使用OpenCV
+        try:
+            # 读取图像
+            image = cv2.imread(image_path)
+            if image is None:
+                # 如果cv2.imread失败，尝试使用PIL读取再转换
+                pil_image = Image.open(image_path)
+                image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+                
+            # 转为灰度图
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            
+            # 使用OpenCV的QRCodeDetector
+            qr_detector = cv2.QRCodeDetector()
+            data, bbox, _ = qr_detector.detectAndDecode(gray)
+            
+            if data:
+                logging.info(f"成功识别二维码(OpenCV): {data[:50]}...")
+                return data
+                
+            # 尝试不同的预处理方法
+            # 1. 应用高斯模糊减少噪声
+            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+            data, bbox, _ = qr_detector.detectAndDecode(blurred)
+            if data:
+                logging.info(f"成功识别二维码(OpenCV-模糊): {data[:50]}...")
+                return data
+                
+            # 2. 应用自适应阈值
+            thresh = cv2.adaptiveThreshold(
+                gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                cv2.THRESH_BINARY, 11, 2
+            )
+            data, bbox, _ = qr_detector.detectAndDecode(thresh)
+            if data:
+                logging.info(f"成功识别二维码(OpenCV-阈值): {data[:50]}...")
+                return data
+                
+        except Exception as e:
+            logging.warning(f"OpenCV二维码解码失败: {e}")
         
-        # 尝试直接读取二维码
-        decoded_objects = decode(image)
-        if decoded_objects:
-            for obj in decoded_objects:
-                try:
-                    qr_data = obj.data.decode('utf-8')
-                    logging.info(f"成功识别二维码: {qr_data[:50]}...")
-                    return qr_data
-                except Exception as e:
-                    logging.warning(f"解码二维码数据失败: {e}")
-                    continue
-        
-        # 如果直接读取失败，尝试优化图像再次读取
-        # 转为灰度图以提高对比度
-        gray_img = image.convert('L')
-        decoded_objects = decode(gray_img)
-        if decoded_objects:
-            for obj in decoded_objects:
-                try:
-                    qr_data = obj.data.decode('utf-8')
-                    logging.info(f"优化后识别二维码: {qr_data[:50]}...")
-                    return qr_data
-                except Exception as e:
-                    logging.warning(f"解码优化后的二维码数据失败: {e}")
-                    continue
-                    
         logging.warning(f"未能在图像中识别到二维码: {image_path}")
         return None
     except Exception as e:
@@ -173,17 +218,11 @@ def extract_information_from_pdf(file_path):
                 images = convert_to_image_memory(file_path)
                 
                 # 确保有临时目录
-                temp_dir = "/tmp"
-                if os.environ.get("VERCEL") == "1":
-                    # 在Vercel环境中使用/tmp目录
-                    temp_dir = "/tmp"
-                else:
-                    # 本地环境使用当前目录的temp子目录
-                    temp_dir = os.path.join(os.path.dirname(__file__), "temp")
-                    os.makedirs(temp_dir, exist_ok=True)
+                temp_dir = tempfile.gettempdir()  # 使用系统临时目录
                 
                 # 从图像中提取二维码信息
                 for idx, img_data in enumerate(images):
+                    # 从内存中加载图像
                     img = Image.open(io.BytesIO(img_data))
                     # 保存临时图像文件用于二维码扫描
                     temp_img_path = os.path.join(temp_dir, f"temp_qr_img_{idx}.png")

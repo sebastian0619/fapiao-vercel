@@ -33,7 +33,6 @@
     ],
     "env": {
         "VERCEL": "1",
-        "PYTHONUNBUFFERED": "1",
-        "NO_ZBAR_REQUIRED": "1"
+        "PYTHONUNBUFFERED": "1"
     }
 } 

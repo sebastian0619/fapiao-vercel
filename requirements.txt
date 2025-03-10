@@ -8,9 +8,15 @@ pillow==10.2.0
 numpy==1.26.1
 requests==2.31.0
 
+# 二维码识别 - 使用不依赖系统库的纯Python实现
+# 可以在Vercel环境中工作
+opencv-python-headless==4.8.1.78
+pyzxing==1.0.2  # 纯Python的二维码库
+# 用于PDF图像处理
+PyMuPDF==1.23.8
+
 # 可选依赖 - 这些可能在Vercel环境中不可用
 # 如果安装失败，应用程序将降级使用备用功能
-# PyMuPDF==1.23.8  # 用于PDF图像提取
 # pyzbar==0.1.9    # 用于二维码读取 (需要zbar系统库)
 # defusedxml==0.7.1  # 用于XML解析
 # lxml==4.9.3        # 用于XML解析
